@@ -1,0 +1,15 @@
+streamlit
+google-generativeai
+supabase
+openai
+anthropic
+playwright
+python-dotenv
+python-dateutil
+jinja2
+pypdf
+pdfplumber
+requests
+beautifulsoup4
+mcp
+uv

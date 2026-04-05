@@ -1,0 +1,28 @@
+# Environment variables — never commit these
+.env
+
+# Python cache
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# Logs
+*.log
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+*.swp
+
+# Claude Code settings
+.claude/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Streamlit local config
+.streamlit/secrets.toml
