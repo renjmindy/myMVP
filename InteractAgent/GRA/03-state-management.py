@@ -4,41 +4,46 @@ from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 
 load_dotenv()
-llm = ChatDeepSeek(model="deepseek-chat")
+#llm = ChatDeepSeek(model="deepseek-chat")
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    # base_url is optional here; defaults to https://api.openai.com/v1
+)
 
-# 定义状态类型
+# Define state type
 class State(TypedDict):
     messages: list[str]
 
 def extractor_node(state: State) -> State:
-    """从用户输入中提取城市名称"""
+    """Extract city name from user input"""
     user_input = state["messages"][-1]
-    prompt = f"请从下面的句子中提取城市名称，只返回城市名，不要其他内容：'{user_input}'"
+    prompt = f"Please extract the city name from the following sentence, returning only the city name and nothing else: '{user_input}'"
     city_name = llm.invoke(prompt).content
-    print(f"[Extractor] 提取到的城市: {city_name}")
-    # 将提取结果追加到状态中
+    print(f"[Extractor] Extracted city: {city_name}")
+    # Append the extraction result to the state
     return {"messages": state["messages"] + [city_name]}
 
 def weather_tool_node(state: State) -> State:
-    """模拟天气查询工具"""
+    """Simulate a weather query tool"""
     city_name = state["messages"][-1]
-    # 模拟 API 返回的数据
-    mock_data = f"{city_name}今天天气晴朗，气温25度。"
-    print(f"[Tool] 查询结果: {mock_data}")
+    # Simulated API return data
+    mock_data = f"The weather in {city_name} today is sunny with a temperature of 25 degrees."
+    print(f"[Tool] Query result: {mock_data}")
     return {"messages": state["messages"] + [mock_data]}
 
 def responder_node(state: State) -> State:
-    """生成最终回复"""
+    """Generate final response"""
     user_original_question = state["messages"][0]
     weather_info = state["messages"][-1]
     
-    prompt = f"用户原始问题是：'{user_original_question}'。查到的天气信息是：'{weather_info}'。请据此生成友好的回复。"
+    prompt = f"User's original question: '{user_original_question}'. Found weather information: '{weather_info}'. Please generate a friendly response based on this."
     final_response = llm.invoke(prompt).content
     return {"messages": state["messages"] + [final_response]}
 
-# 构建图（使用 StateGraph 替代已废弃的 Graph）
+# Build the graph (using StateGraph instead of the deprecated Graph)
 workflow = StateGraph(State)
 
 workflow.add_node("extractor", extractor_node)
@@ -52,10 +57,10 @@ workflow.add_edge("responder", END)
 
 app = workflow.compile()
 
-# 运行
-print("--- 开始运行 03-state-management ---")
-# 注意：这里输入的格式需要符合 extract_node 的预期（字典包含 messages）
-inputs = {"messages": ["今天北京天气怎么样？"]}
+# Run
+print("--- Starting 03-state-management ---")
+# Note: The input format here must match the expectation of extractor_node (dictionary containing messages)
+inputs = {"messages": ["How is the weather in San Jose today?"]}
 result = app.invoke(inputs)
-print(f"最终结果: {result['messages'][-1]}")
-print("--- 运行结束 ---")
+print(f"Final Result: {result['messages'][-1]}")
+print("--- Execution Finished ---")

@@ -4,27 +4,32 @@ from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 from dotenv import load_dotenv
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 
-# 初始化环境变量和模型
+# Initialize environment variables and the model
 load_dotenv()
-llm = ChatDeepSeek(model="deepseek-chat")
+#llm = ChatDeepSeek(model="deepseek-chat")
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    # base_url is optional here; defaults to https://api.openai.com/v1
+)
 
-# 定义状态类型
+# Define state type
 class State(TypedDict):
     message: str
 
-# 定义节点 1：调用 LLM
+# Define Node 1: Calling the LLM
 def agent_node(state: State) -> State:
-    print(f"[Agent Node] 正在思考输入: {state['message']}")
+    print(f"[Agent Node] Thinking about input: {state['message']}")
     response = llm.invoke(state["message"])
-    # 我们只返回消息内容
+    # We only return the message content
     return {"message": response.content}
 
-# 定义节点 2：简单处理输出
+# Define Node 2: Simple output processing
 def post_process_node(state: State) -> State:
-    return {"message": f"Agent 回复说: {state['message']}"}
+    return {"message": f"Agent replied: {state['message']}"}
 
-# 构建图（使用 StateGraph 替代已废弃的 Graph）
+# Build the graph (using StateGraph instead of the deprecated Graph)
 workflow = StateGraph(State)
 
 workflow.add_node("agent", agent_node)
@@ -36,10 +41,10 @@ workflow.add_edge("post_process", END)
 
 app = workflow.compile()
 
-# 运行
-print("--- 开始运行 02-llm-integration ---")
-# 我们问一个问题
-user_input = "请用一句话介绍你自己。"
+# Run
+print("--- Starting 02-llm-integration ---")
+# Ask a question
+user_input = "Please introduce yourself in one sentence."
 result = app.invoke({"message": user_input})
-print(f"最终结果: {result['message']}")
-print("--- 运行结束 ---")
+print(f"Final Result: {result['message']}")
+print("--- Execution Finished ---")

@@ -9,54 +9,60 @@ from langgraph.prebuilt import ToolNode, tools_condition
 from langchain_core.messages import HumanMessage, AIMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_deepseek import ChatDeepSeek
+from langchain_openai import ChatOpenAI
 from dotenv import load_dotenv
 import os
 
 load_dotenv()
 
-# 1. 定义状态结构
+# 1. Define State Structure
 class AgentState(TypedDict):
+    # Annotated with operator.add to allow list merging in the state
     messages: Annotated[Sequence[HumanMessage], operator.add]
 
-# 2. 定义工具
-# 使用 @tool 装饰器定义一个简单的模拟天气工具
+# 2. Define Tools
+# Use the @tool decorator to define a simple mock weather tool
 @tool
 def get_weather(city: str):
-    """获取指定城市的天气信息"""
-    # 这里模拟天气查询
-    return f"{city}的天气是晴天，温度28度。"
+    """Get weather information for a specified city"""
+    # Simulate a weather query here
+    return f"The weather in {city} is sunny, with a temperature of 28 degrees."
 
 tools = [get_weather]
 
-# 3. 初始化模型并绑定工具
-llm = ChatDeepSeek(model="deepseek-chat")
-# 将工具绑定到模型（使用 bind_tools 替代 bind_functions）
+# 3. Initialize the model and bind tools
+#llm = ChatDeepSeek(model="deepseek-chat")
+llm = ChatOpenAI(
+    model="gpt-4o-mini",
+    # base_url is optional here; defaults to https://api.openai.com/v1
+)
+# Bind tools to the model (use bind_tools instead of deprecated bind_functions)
 llm_with_tools = llm.bind_tools(tools)
 
-# 4. 定义节点函数
+# 4. Define node functions
 def agent_node(state: AgentState) -> AgentState:
     messages = state["messages"]
-    # 调用绑定了工具的 LLM
+    # Invoke the LLM with bound tools
     response = llm_with_tools.invoke(messages)
-    # 返回更新后的消息列表
+    # Return the updated message list
     return {"messages": [response]}
 
-# 创建工具节点（使用新的 ToolNode）
+# Create tool node (using the new ToolNode class)
 tool_node = ToolNode(tools)
 
-# 5. 构建条件图
+# 5. Build the Conditional Graph
 workflow = StateGraph(AgentState)
 
 workflow.add_node("agent", agent_node)
 workflow.add_node("tools", tool_node)
 
-# 设置入口（使用 START 替代 set_entry_point）
+# Set the entry point (use START instead of set_entry_point)
 workflow.add_edge(START, "agent")
 
-# 添加条件边
-# 逻辑：agent 节点执行完后，调用 tools_condition 判断是否需要调用工具
-# 如果需要调用工具，则进入 "tools" 节点
-# 否则结束流程 (END)
+# Add conditional edges
+# Logic: After the agent node executes, call tools_condition to decide if a tool call is needed
+# If a tool call is required, move to the "tools" node
+# Otherwise, end the process (END)
 workflow.add_conditional_edges(
     "agent",
     tools_condition,
@@ -66,58 +72,58 @@ workflow.add_conditional_edges(
     }
 )
 
-# 工具执行完后，必须回到 agent 进行总结或下一步决策
+# After tool execution, control must return to the agent for summarization or the next decision
 workflow.add_edge('tools', 'agent')
 
-# 编译
+# Compile
 app = workflow.compile()
 
-# 辅助函数：格式化打印节点输出
+# Helper function: Format and print node output
 def format_node_output(step: int, node_name: str, data: dict) -> None:
-    """格式化并打印节点输出，使终端输出更易读"""
+    """Formats and prints node output to make terminal output more readable"""
     print(f"\n{'='*60}")
-    print(f"Step {step}: 节点 [{node_name}]")
+    print(f"Step {step}: Node [{node_name}]")
     print('='*60)
     
     if "messages" not in data:
-        print("数据:")
+        print("Data:")
         pprint(data, indent=2, width=100)
         return
     
     for i, msg in enumerate(data["messages"]):
-        print(f"\n  消息 {i+1} [{type(msg).__name__}]:")
+        print(f"\n  Message {i+1} [{type(msg).__name__}]:")
         print(f"  {'-'*50}")
         
-        # 打印内容（截断长文本）
+        # Print content (truncate long text)
         content = str(msg.content)
         if len(content) > 200:
-            print(f"  内容: {content[:200]}...")
+            print(f"  Content: {content[:200]}...")
         else:
-            print(f"  内容: {content}")
+            print(f"  Content: {content}")
         
-        # 打印工具调用信息（如果有）
+        # Print tool call information (if any)
         if hasattr(msg, 'tool_calls') and msg.tool_calls:
-            print(f"\n  工具调用:")
+            print(f"\n  Tool Calls:")
             for tc in msg.tool_calls:
                 tool_name = tc.get('name', 'unknown')
                 tool_args = tc.get('args', {})
-                print(f"    ├── 函数: {tool_name}")
-                print(f"    └── 参数: {json.dumps(tool_args, ensure_ascii=False)}")
+                print(f"    ├── Function: {tool_name}")
+                print(f"    └── Args: {json.dumps(tool_args, ensure_ascii=False)}")
         
-        # 打印其他有用属性
+        # Print other useful attributes
         if hasattr(msg, 'name') and msg.name:
-            print(f"  名称: {msg.name}")
+            print(f"  Name: {msg.name}")
 
 
-# 7. 运行测试
+# 7. Run Tests
 print("="*60)
-print("开始运行 04-conditional-agent")
+print("Starting 04-conditional-agent")
 print("="*60)
 
-# 测试场景 1：需要调用工具
-print("\n" + "📊 场景 1：询问天气")
+# Test Scenario 1: Tool call required
+print("\n" + "📊 Scenario 1: Asking about weather")
 print("-"*60)
-inputs = {"messages": [HumanMessage(content="今天北京天气怎么样？")]}
+inputs = {"messages": [HumanMessage(content="How is the weather in San Jose today?")]}
 step = 1
 final_value = None
 
@@ -128,16 +134,16 @@ for output in app.stream(inputs):
         step += 1
 
 if final_value and "messages" in final_value:
-    print(f"\n🎯 最终回答: {final_value['messages'][-1].content}")
+    print(f"\n🎯 Final Answer: {final_value['messages'][-1].content}")
 
-# 测试场景 2：闲聊，不需要工具
-print("\n\n" + "💬 场景 2：闲聊")
+# Test Scenario 2: Chitchat, no tool needed
+print("\n\n" + "💬 Scenario 2: Chitchat")
 print("-"*60)
-inputs = {"messages": [HumanMessage(content="你好，你是谁？")]}
+inputs = {"messages": [HumanMessage(content="Hello, who are you?")]}
 result = app.invoke(inputs)
-print(f"\n  输入: 你好，你是谁？")
-print(f"  🎯 最终回答: {result['messages'][-1].content}")
+print(f"\n  Input: Hello, who are you?")
+print(f"  🎯 Final Answer: {result['messages'][-1].content}")
 
 print("\n" + "="*60)
-print("运行结束")
+print("Execution Finished")
 print("="*60)

@@ -3,36 +3,36 @@
 from langgraph.graph import StateGraph, START, END
 from typing_extensions import TypedDict
 
-# 定义状态类型
+# Define state type
 class State(TypedDict):
     message: str
 
-# 定义两个简单的节点函数
+# Define two simple node functions
 def function_1(state: State) -> State:
     return {"message": state["message"] + " Hello"}
 
 def function_2(state: State) -> State:
     return {"message": state["message"] + " World"}
 
-# 1. 定义一个图（使用 StateGraph 替代已废弃的 Graph）
+# 1. Define a graph (use StateGraph instead of the deprecated Graph)
 workflow = StateGraph(State)
 
-# 2. 添加节点
-# 第一个参数是节点的名称，第二个参数是执行的函数
+# 2. Add nodes
+# The first parameter is the node name, the second is the function to execute
 workflow.add_node("node_1", function_1)
 workflow.add_node("node_2", function_2)
 
-# 3. 添加边
-# 定义节点之间的连接关系：START -> node_1 -> node_2 -> END
+# 3. Add edges
+# Define the connection relationship between nodes: START -> node_1 -> node_2 -> END
 workflow.add_edge(START, "node_1")
 workflow.add_edge("node_1", "node_2")
 workflow.add_edge("node_2", END)
 
-# 5. 编译图
+# 5. Compile the graph
 app = workflow.compile()
 
-# 6. 运行图
-print("--- 开始运行 01-simple-graph ---")
+# 6. Run the graph
+print("--- Starting 01-simple-graph ---")
 result = app.invoke({"message": "LangGraph"})
-print(f"最终结果: {result['message']}")
-print("--- 运行结束 ---")
+print(f"Final Result: {result['message']}")
+print("--- Execution Finished ---")
