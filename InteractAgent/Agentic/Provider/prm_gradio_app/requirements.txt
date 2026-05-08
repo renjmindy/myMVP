@@ -1,0 +1,13 @@
+--index-url https://pypi.org/simple
+
+# Gradio UI
+gradio>=4.44.0
+
+# LangChain / LangGraph
+langchain-openai>=0.1.0
+langchain-core>=0.2.0
+langgraph>=0.2.0
+
+# Utilities
+python-dotenv>=1.0.0
+requests>=2.31.0
