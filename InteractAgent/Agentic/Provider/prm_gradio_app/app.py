@@ -450,9 +450,38 @@ def _extended_forecast_html(lat: float, lon: float) -> str:
     )
 
 
+def _has_state(city: str) -> bool:
+    """Return True only when city string ends with a 2-letter US state abbreviation."""
+    return bool(re.search(r'\b[A-Z]{2}$', city.strip()))
+
+
+def _missing_state_html(city_hint: str = "") -> str:
+    """Panel shown when the user mentions a city without a state."""
+    city_part = f" for <b>{city_hint}</b>" if city_hint and city_hint.lower() not in ("unknown", "needs_state", "your city") else ""
+    return (
+        '<div style="background:#fff8e1;border:1.5px solid #f9a825;border-radius:8px;'
+        'padding:12px;margin-bottom:8px;">'
+        '<div style="font-size:0.95rem;font-weight:700;color:#f57f17;">'
+        f'📍 State required{city_part}</div>'
+        '<div style="font-size:0.80rem;color:#555;margin-top:6px;line-height:1.55;">'
+        'Many US cities share the same name across states (e.g. Springfield exists in IL, MO, OH, and more).<br>'
+        'Please include your <b>state abbreviation</b> so we can find the right hospitals.<br>'
+        'Example: <b>"I am in Richardson, TX"</b> &nbsp;or&nbsp; <b>"I\'m in Springfield, IL"</b>'
+        '</div></div>'
+    )
+
+
 def _hospitals_html(hospitals: list, city: str) -> str:
     if not hospitals:
-        return _APPT_PLACEHOLDER
+        city_display = city if city and city.lower() not in ("unknown", "your city") else "your area"
+        return (
+            f'<div style="background:#fff3e0;border-radius:8px;padding:12px;margin-bottom:8px;">'
+            f'  <div style="font-size:0.95rem;font-weight:700;color:#e65100;">🏥 No hospitals found near {city_display}</div>'
+            f'  <div style="font-size:0.80rem;color:#555;margin-top:6px;">'
+            f'    Try including your state abbreviation, e.g. <b>"I am in Richardson TX"</b> or <b>"I\'m in Boston, MA"</b>.'
+            f'  </div>'
+            f'</div>'
+        )
     rows = ""
     for i, h in enumerate(hospitals, 1):
         rows += f"""
@@ -711,15 +740,18 @@ sentiment_chain = classify_chain | branches
 # ---------------------------------------------------------------------------
 
 def _extract_city(user_message: str) -> str:
-    """LLM-based city extractor — mirrors extractor_node in 03-state-management.py.
-    Also corrects common misspellings so geocoding succeeds (e.g. 'Los Angelas' → 'Los Angeles').
+    """LLM-based city+state extractor.
+    State is REQUIRED — many US cities share the same name across states.
+    Returns 'City, ST' on success, 'unknown' if state is absent or no city found.
     """
     prompt = (
-        f"Extract the US city name from this sentence. "
-        f"Correct any obvious misspelling of the city name (e.g. 'Los Angelas' → 'Los Angeles'). "
-        f"If a two-letter US state abbreviation is also present (e.g. CA, TX, VA), include it. "
-        f"Return only the corrected city name (and state abbreviation if given), nothing else. "
-        f"If no city is mentioned, return 'unknown'. "
+        f"Extract the US city name AND its two-letter state abbreviation from this sentence. "
+        f"The state abbreviation is REQUIRED — do not return a city without one, "
+        f"because many US cities share the same name across states (e.g. Springfield exists in IL, MO, OH, and more). "
+        f"Correct obvious city-name misspellings (e.g. 'Los Angelas' → 'Los Angeles'). "
+        f"Convert full state names to two-letter abbreviations (e.g. Texas → TX, California → CA). "
+        f"Return ONLY 'City, ST' format (e.g. 'Richardson, TX'). "
+        f"If no state is mentioned or no city is mentioned, return 'unknown'. "
         f"Sentence: '{user_message}'"
     )
     return llm.invoke(prompt).content.strip()
@@ -733,10 +765,11 @@ def _run_appointment_pipeline(user_message: str, city: str = ""):
     Traffic route is NOT pre-computed here; calculated on demand via Get Directions.
     Returns (city, hospitals_list, hospitals_html, weather_html, traffic_placeholder).
     """
-    if not city or city.lower() == "unknown":
+    if not city or city.lower() in ("unknown", "needs_state"):
         city = _extract_city(user_message)
-    if not city or city.lower() == "unknown":
-        city = "your city"
+    # _extract_city now returns 'unknown' when state is absent — propagate that
+    if not city or city.lower() in ("unknown", "needs_state"):
+        city = "unknown"
 
     hospitals = _find_nearby_hospitals(city)
     hosp_html = _hospitals_html(hospitals, city)
@@ -785,15 +818,18 @@ _SYSTEM_PROMPT = (
     "APPOINTMENT SCHEDULING RULE: "
     "Whenever you flag a clinical review, mention a clinician follow-up, or identify a concerning PRM score, "
     "you MUST recommend an in-person appointment.\n"
-    "— If the patient's current message does NOT contain a city name, ask once: "
-    "'Could you share your current city? The app will then show you nearby hospitals, "
-    "today\\'s weather, and directions — just pick a hospital from the list on the right.'\n"
-    "— ONLY IF the patient's current message explicitly contains a city name "
-    "(e.g. 'I am in Newport News, VA' or 'I\\'m currently in Plano TX'), "
-    "acknowledge it: 'Thank you — the nearby hospitals and weather for [city] "
+    "— If the patient's current message does NOT contain both a city AND a state, ask once: "
+    "'Could you share your current city and state? For example: \\'I am in Richardson, TX\\'. "
+    "Many US city names are shared across states, so both are needed to find the right hospitals near you.'\n"
+    "— ONLY IF the patient's current message explicitly contains both a city AND a state "
+    "(e.g. 'I am in Newport News, VA' or 'I\\'m currently in Plano, TX'), "
+    "acknowledge it: 'Thank you — the nearby hospitals and weather for [city, state] "
     "are now shown in the panel on the right. Please select a hospital and click Get Directions.'\n"
+    "— If the patient mentions a city WITHOUT a state, ask them to add the state: "
+    "'Could you also share your state? For example, \\'Richardson, TX\\'. "
+    "This helps me find the correct hospitals since many cities share the same name.'\n"
     "— NEVER say a city was shared if the patient\\'s current message does not contain one. "
-    "Do not assume or hallucinate a city from prior conversation turns.\n\n"
+    "Do not assume or hallucinate a city or state from prior conversation turns.\n\n"
     "IMPORTANT — do NOT invent travel times, distances, weather, or hospital names. "
     "That information is shown automatically in the sidebar. "
     "Do NOT book or suggest specific appointment dates — "
@@ -863,17 +899,23 @@ def _detect_location_intent(user_message: str, history: list) -> dict:
     prompt = (
         "You are a routing classifier for a healthcare patient app.\n\n"
         "Decide whether to activate the Appointment Assistant panel.\n"
-        "Set trigger=true when the patient is:\n"
-        "  • sharing their current city or location, OR\n"
-        "  • asking to find a nearby hospital, clinic, doctor, or clinician, OR\n"
-        "  • requesting, scheduling, or booking an appointment.\n"
-        "Set trigger=false for general health discussion, PRM score questions, "
-        "emotional expression, or greetings with no location/provider-seeking intent.\n\n"
-        "Also extract the US city they mentioned (correct misspellings, e.g. 'Los Angelas'→'Los Angeles'). "
-        "Include the 2-letter state abbreviation if present. Return 'unknown' if no city is mentioned.\n"
+        "Set trigger=true when the patient is doing ANY of the following:\n"
+        "  • Mentioning their current city, town, or location (e.g. 'I am in Richardson TX', "
+        "'I live in Boston', 'I'm currently in Chicago, IL', 'my city is Denver CO')\n"
+        "  • Asking to find a nearby hospital, clinic, doctor, or clinician\n"
+        "  • Requesting, scheduling, or booking an appointment\n"
+        "  • Saying they need urgent care or want to see someone\n"
+        "IMPORTANT: sharing a city name alone (with no other context) is ALWAYS trigger=true.\n"
+        "Set trigger=false ONLY for: general health discussion, PRM score questions, "
+        "emotional expression with no location/provider-seeking intent, or greetings.\n\n"
+        "Also extract the US city AND state (both required — many cities share names across states). "
+        "Convert full state names to 2-letter abbreviations (e.g. Texas→TX, California→CA). "
+        "Return city as 'City ST' format (e.g. 'Richardson TX'). "
+        "If city is mentioned WITHOUT a state, return city='needs_state'. "
+        "Return city='unknown' only when no city is mentioned at all.\n"
         + context_block
         + f'\nCurrent patient message: "{user_message}"\n\n'
-        "Reply with ONLY valid JSON, no markdown:\n"
+        "Reply with ONLY valid JSON, no markdown fences:\n"
         '{"trigger": true, "city": "City ST"}'
     )
     try:
@@ -1039,33 +1081,99 @@ def respond(
     # location+appointment signal, force-trigger with a regex-extracted city.
     if not intent["trigger"]:
         _appt_re = re.search(
-            r"\b(appointment|schedule|hospital|clinic|doctor|clinician)\b",
+            r"\b(appointment|schedule|hospital|clinic|doctor|clinician|book|visit)\b",
             user_message, re.I,
         )
-        _city_re = re.search(
-            r"\b(?:in|from|near|at)\s+([A-Za-z][A-Za-z\s]{1,20}(?:,\s*[A-Z]{2}|[A-Z]{2}))\b",
+
+        # Three passes for city detection. "is" covers "my city is X".
+        # State is enforced by the _has_state() gate below — not here.
+
+        # Pass 1: "in/from/near/at/is City ST"  or  "City, ST"
+        _city_abbrev = re.search(
+            r"\b(?:in|from|near|at|is)\s+([A-Za-z][A-Za-z ]{1,20}?)(?:,?\s+([A-Z]{2}))\b",
             user_message,
         )
+        # Pass 2: "in/from/near/at/is City StateName"  (full name → abbrev in extraction below)
+        _state_names_pat = (
+            r"Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|"
+            r"Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|"
+            r"Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|"
+            r"Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|"
+            r"New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|"
+            r"Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|"
+            r"Virginia|Washington|West Virginia|Wisconsin|Wyoming"
+        )
+        _city_fullstate = re.search(
+            r"\b(?:in|from|near|at|is)\s+([A-Za-z][A-Za-z ]{1,20}?),?\s+("
+            + _state_names_pat + r")\b",
+            user_message, re.I,
+        )
+        # Pass 3: city-only — triggers the intent so the missing-state panel is shown;
+        # the _has_state() gate below prevents the pipeline from running without a state.
+        _city_only = re.search(
+            r"\b(?:in|from|near|at|is)\s+([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)"
+            r"(?=\s*[.!?,\-—]|\s+(?:now|here|and|but|so|the|I|can|please|help|there|—)|$)",
+            user_message,
+        )
+
+        _city_re = _city_abbrev or _city_fullstate or _city_only
+
         if _appt_re or _city_re:
             intent["trigger"] = True
-            if _city_re and intent["city"] == "unknown":
-                intent["city"] = _city_re.group(1).strip()
+            if _city_re and intent["city"] in ("unknown", "needs_state"):
+                if _city_abbrev:
+                    city_name  = _city_abbrev.group(1).strip()
+                    state_abbr = _city_abbrev.group(2)
+                    intent["city"] = f"{city_name} {state_abbr}"
+                elif _city_fullstate:
+                    city_name  = _city_fullstate.group(1).strip().rstrip(",")
+                    state_full = _city_fullstate.group(2).strip()
+                    _ST_MAP = {
+                        "Alabama":"AL","Alaska":"AK","Arizona":"AZ","Arkansas":"AR",
+                        "California":"CA","Colorado":"CO","Connecticut":"CT",
+                        "Delaware":"DE","Florida":"FL","Georgia":"GA","Hawaii":"HI",
+                        "Idaho":"ID","Illinois":"IL","Indiana":"IN","Iowa":"IA",
+                        "Kansas":"KS","Kentucky":"KY","Louisiana":"LA","Maine":"ME",
+                        "Maryland":"MD","Massachusetts":"MA","Michigan":"MI",
+                        "Minnesota":"MN","Mississippi":"MS","Missouri":"MO",
+                        "Montana":"MT","Nebraska":"NE","Nevada":"NV",
+                        "New Hampshire":"NH","New Jersey":"NJ","New Mexico":"NM",
+                        "New York":"NY","North Carolina":"NC","North Dakota":"ND",
+                        "Ohio":"OH","Oklahoma":"OK","Oregon":"OR",
+                        "Pennsylvania":"PA","Rhode Island":"RI","South Carolina":"SC",
+                        "South Dakota":"SD","Tennessee":"TN","Texas":"TX",
+                        "Utah":"UT","Vermont":"VT","Virginia":"VA",
+                        "Washington":"WA","West Virginia":"WV","Wisconsin":"WI",
+                        "Wyoming":"WY",
+                    }
+                    abbr = _ST_MAP.get(state_full.title(), state_full[:2].upper())
+                    intent["city"] = f"{city_name} {abbr}"
+                else:
+                    # Pass 3: city without state — store bare city name so _has_state() returns False
+                    intent["city"] = _city_only.group(1).strip()
 
     if intent["trigger"]:
-        try:
-            city_val, hospitals, hosp_html, weather_html, traffic_html = \
-                _run_appointment_pipeline(user_message, city=intent["city"])
-            if hospitals:
-                choices = [
-                    f"#{i} {h['name']} ({h['dist_mi']:.1f} mi)"
-                    for i, h in enumerate(hospitals, 1)
-                ]
-                radio_update = gr.Radio(
-                    choices=choices, value=None, visible=True,
-                    label="Select a hospital then click Get Directions ↓",
-                )
-        except Exception as _exc:
-            print(f"[pipeline error] {_exc}")
+        _detected_city = intent["city"]
+        # Gate: state is mandatory. If city is missing or has no state, show prompt instead.
+        if _detected_city in ("unknown", "needs_state") or not _has_state(_detected_city):
+            hosp_html = _missing_state_html(
+                _detected_city if _detected_city not in ("unknown", "needs_state") else ""
+            )
+        else:
+            try:
+                city_val, hospitals, hosp_html, weather_html, traffic_html = \
+                    _run_appointment_pipeline(user_message, city=_detected_city)
+                if hospitals:
+                    choices = [
+                        f"#{i} {h['name']} ({h['dist_mi']:.1f} mi)"
+                        for i, h in enumerate(hospitals, 1)
+                    ]
+                    radio_update = gr.Radio(
+                        choices=choices, value=None, visible=True,
+                        label="Select a hospital then click Get Directions ↓",
+                    )
+            except Exception as _exc:
+                print(f"[pipeline error] {_exc}")
 
     # --- Build LangChain message history ---
     lc_messages: List[BaseMessage] = []
@@ -1183,14 +1291,14 @@ _SAMPLE_GROUPS = [
     ]),
     ("starter-purple", "🚨 Escalate & Appointment", [
         "I honestly don't see the point in continuing treatment anymore.",
-        "Yes, I'd like to schedule an appointment. I'm currently in [city].",
-        "I'm in [city] — can you help me book an appointment?",
+        "Yes, I'd like to schedule an appointment. I'm currently in [city], [state].",
+        "I'm in [city], [state] — can you help me book an appointment?",
         "I've been feeling hopeless and don't want to get out of bed anymore.",
         "My pain has become unbearable — I need to see someone urgently.",
-        "I need to see a doctor soon. I'm currently located in [city].",
-        "Can you find me a nearby hospital? I'm currently in [city].",
+        "I need to see a doctor soon. I'm currently located in [city], [state].",
+        "Can you find me a nearby hospital? I'm currently in [city], [state].",
         "I've been having thoughts I shouldn't be having and need help now.",
-        "I want to visit a hospital near me. My city is [city].",
+        "I want to visit a hospital near me. My city is [city], [state].",
     ]),
 ]
 
