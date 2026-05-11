@@ -457,16 +457,26 @@ def _has_state(city: str) -> bool:
 
 def _missing_state_html(city_hint: str = "") -> str:
     """Panel shown when the user mentions a city without a state."""
-    city_part = f" for <b>{city_hint}</b>" if city_hint and city_hint.lower() not in ("unknown", "needs_state", "your city") else ""
+    # Strip any leaked 'needs_state' signal the LLM may have appended to the city name
+    clean = re.sub(r",?\s*needs_state\b.*", "", city_hint, flags=re.I).strip()
+    city_part = (
+        f' for <span style="color:#b45309;font-weight:700;">{clean}</span>'
+        if clean and clean.lower() not in ("unknown", "your city") else ""
+    )
     return (
         '<div style="background:#fff8e1;border:1.5px solid #f9a825;border-radius:8px;'
-        'padding:12px;margin-bottom:8px;">'
-        '<div style="font-size:0.95rem;font-weight:700;color:#f57f17;">'
+        'padding:12px;margin-bottom:8px;color:#333;">'
+        f'<div style="font-size:0.95rem;font-weight:700;color:#b45309;">'
         f'📍 State required{city_part}</div>'
-        '<div style="font-size:0.80rem;color:#555;margin-top:6px;line-height:1.55;">'
-        'Many US cities share the same name across states (e.g. Springfield exists in IL, MO, OH, and more).<br>'
-        'Please include your <b>state abbreviation</b> so we can find the right hospitals.<br>'
-        'Example: <b>"I am in Richardson, TX"</b> &nbsp;or&nbsp; <b>"I\'m in Springfield, IL"</b>'
+        '<div style="font-size:0.80rem;color:#444;margin-top:6px;line-height:1.55;">'
+        'Many US cities share the same name across states '
+        '<span style="color:#444;">(e.g. Springfield exists in IL, MO, OH, and more)</span>.<br>'
+        '<span style="color:#444;">Please include your </span>'
+        '<b style="color:#333;">state abbreviation</b>'
+        '<span style="color:#444;"> so we can find the right hospitals.</span><br>'
+        'Example: <b style="color:#333;">"I am in Richardson, TX"</b>'
+        '<span style="color:#444;"> &nbsp;or&nbsp; </span>'
+        '<b style="color:#333;">"I\'m in Springfield, IL"</b>'
         '</div></div>'
     )
 
@@ -475,10 +485,12 @@ def _hospitals_html(hospitals: list, city: str) -> str:
     if not hospitals:
         city_display = city if city and city.lower() not in ("unknown", "your city") else "your area"
         return (
-            f'<div style="background:#fff3e0;border-radius:8px;padding:12px;margin-bottom:8px;">'
-            f'  <div style="font-size:0.95rem;font-weight:700;color:#e65100;">🏥 No hospitals found near {city_display}</div>'
-            f'  <div style="font-size:0.80rem;color:#555;margin-top:6px;">'
-            f'    Try including your state abbreviation, e.g. <b>"I am in Richardson TX"</b> or <b>"I\'m in Boston, MA"</b>.'
+            f'<div style="background:#fff3e0;border-radius:8px;padding:12px;margin-bottom:8px;color:#333;">'
+            f'  <div style="font-size:0.95rem;font-weight:700;color:#c84b00;">🏥 No hospitals found near {city_display}</div>'
+            f'  <div style="font-size:0.80rem;color:#444;margin-top:6px;">'
+            f'    Try including your state abbreviation, e.g.'
+            f'    <b style="color:#333;">"I am in Richardson, TX"</b> or'
+            f'    <b style="color:#333;">"I\'m in Boston, MA"</b>.'
             f'  </div>'
             f'</div>'
         )
