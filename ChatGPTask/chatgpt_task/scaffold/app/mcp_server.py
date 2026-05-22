@@ -141,20 +141,12 @@ TOOL_DEFINITIONS: list[Tool] = [
 # Registry pattern — name to handler dispatch
 # ===================================================================
 
-# TODO: Implement the TOOL_REGISTRY dictionary
-#
-# Design decision: Registry pattern — decouple routing from handlers
-#   so adding a new tool is a one-line change (Open/Closed Principle).
-#   Beats long if-elif chains: easier to test, extend, and reason about.
-#
-# Hints:
-# 1. Map tool name strings to their handler functions
-# 2. Keys should match the tool names from TOOL_DEFINITIONS above
-#    (e.g., "task.create")
-# 3. Values are the handler functions defined earlier in this file
-#    (e.g., handle_create_task)
-# 4. There are 4 tools: task.create, task.list, task.status, task.cancel
-TOOL_REGISTRY: dict = {}
+TOOL_REGISTRY: dict = {
+    "task.create": handle_create_task,
+    "task.list": handle_list_tasks,
+    "task.status": handle_get_status,
+    "task.cancel": handle_cancel_task,
+}
 
 
 def route_tool_call(tool_name: str, arguments: dict, db: Session) -> dict:
@@ -163,18 +155,10 @@ def route_tool_call(tool_name: str, arguments: dict, db: Session) -> dict:
     Called by the async @server.call_tool() wrapper below. Kept sync so
     handlers can use plain SQLAlchemy without async ceremony.
     """
-    # TODO: Implement this function
-    #
-    # Design decision: Single dispatch point for all MCP tool calls —
-    #   the LLM sends a tool_name + arguments, and this function routes
-    #   to the correct handler via the registry.
-    #
-    # Hints:
-    # 1. Look up tool_name in TOOL_REGISTRY using dict.get()
-    # 2. If not found, return {"error": f"Unknown tool: {tool_name}"}
-    # 3. If found, call the handler with db and **arguments
-    # 4. Return the handler's result
-    return {"error": "Not implemented"}
+    handler = TOOL_REGISTRY.get(tool_name)
+    if handler is None:
+        return {"error": f"Unknown tool: {tool_name}"}
+    return handler(db, **arguments)
 
 
 # ===================================================================
