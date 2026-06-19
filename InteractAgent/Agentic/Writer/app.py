@@ -4,6 +4,41 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 
+
+def extract_text(file) -> str:
+    """Extract text from an uploaded file (PDF, DOCX, TXT, or any readable format)."""
+    if file is None:
+        return ""
+
+    # Gradio 6 passes a dict; older versions pass a path or file object
+    if isinstance(file, dict):
+        file_path = file.get("path") or file.get("name", "")
+        filename = file.get("orig_name") or os.path.basename(file_path)
+    elif isinstance(file, str):
+        file_path, filename = file, os.path.basename(file)
+    else:
+        file_path = getattr(file, "name", str(file))
+        filename = os.path.basename(file_path)
+
+    ext = os.path.splitext(filename)[1].lower()
+    try:
+        if ext == ".pdf":
+            import pypdf
+            reader = pypdf.PdfReader(file_path)
+            content = "\n".join(
+                p.extract_text() for p in reader.pages if p.extract_text()
+            )
+        elif ext == ".docx":
+            import docx
+            doc = docx.Document(file_path)
+            content = "\n".join(p.text for p in doc.paragraphs if p.text)
+        else:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                content = f.read()
+        return f"[📎 {filename}]\n\n{content}"
+    except Exception as e:
+        return f"[無法讀取 {filename}：{e}]"
+
 load_dotenv()
 
 _api_key = os.environ.get("OPENAI_API_KEY")
@@ -249,11 +284,23 @@ with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
         )
         submit_btn = gr.Button("送出 ➤", scale=1, variant="primary")
 
+    with gr.Row():
+        file_upload = gr.File(
+            label="📎 上傳文件（PDF、Word、TXT、CSV、MD…）",
+            file_types=[".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".xml", ".html"],
+            scale=1,
+        )
+
     def submit(user_message, history, state):
         return respond(user_message, history, state)
 
+    def on_upload(file):
+        """Extract text from uploaded file and populate the input box."""
+        return extract_text(file)
+
     msg.submit(submit, [msg, chatbot, state], [msg, chatbot, state])
     submit_btn.click(submit, [msg, chatbot, state], [msg, chatbot, state])
+    file_upload.upload(on_upload, inputs=[file_upload], outputs=[msg])
 
 
 if __name__ == "__main__":
