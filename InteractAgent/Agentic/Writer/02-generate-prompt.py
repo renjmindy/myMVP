@@ -1,0 +1,236 @@
+
+from typing import Annotated, List, TypedDict
+from dotenv import load_dotenv
+
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import BaseMessage, HumanMessage, SystemMessage
+from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+
+# 載入設定
+load_dotenv()
+
+# --- 1. 定義狀態 ---
+class PromptState(TypedDict):
+    # 儲存對話歷史
+    messages: Annotated[List[BaseMessage], add_messages]
+
+# --- 2. 初始化模型 ---
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+
+# --- 3. 問題定義 ---
+QUESTIONS = [
+    {
+        "id": "Q1",
+        "title": "告知背景、動機與目的",
+        "prompt": "請描述您的背景、動機與目的",
+        "hint": (
+            "例如：\n"
+            "  ✓ 背景：我是製造業業務，負責客戶訂單、報價與交期追蹤\n"
+            "  ✓ 動機：資料分散，新人接手慢，主管也難掌握進度與風險\n"
+            "  ✓ 目的：請協助判斷\n"
+            "    • 哪些流程適合用 AI 協助\n"
+            "    • 如何降低對個人經驗的依賴\n"
+            "    • 如何整理成追蹤表或週報"
+        ),
+    },
+    {
+        "id": "Q2",
+        "title": "設定 LLM 與自己的角色",
+        "prompt": "請設定您自己的角色，以及您希望 AI 扮演的角色",
+        "hint": (
+            "例如：\n"
+            "  ✓ 自己：我是企業專案負責人，這些資料分散、格式不一，我現在要整理給總經理看\n"
+            "  ✓ LLM：你是專業的\n"
+            "    • 資深主管、流程顧問、資料分析師，也是簡報大師\n"
+            "    • 任務：請你協助我將附件整理成 20 頁的簡報"
+        ),
+    },
+    {
+        "id": "Q3",
+        "title": "給予附件、閱讀後回答",
+        "prompt": "請提供素材內容（文字、圖片描述、資料摘要等），並說明您的預期效果",
+        "hint": (
+            "「先讓 AI 讀懂，再讓它動手。」\n"
+            "  Step1：提供素材（附件或文字、圖片內容）\n"
+            "  Step2：明確告訴 AI 任務以及您的預期效果\n"
+            "  Step3：AI 從內容中「理解上下文」，精準生成\n\n"
+            "  應用：\n"
+            "  ✓ 讓 AI 讀資料 → 減少理解負擔\n"
+            "  ✓ 讓 AI 代為萃取重點 → 找出潛在線索\n"
+            "  ✓ 讓 AI 重組內容 → 形成可用的分析與敘事\n"
+            "  ✓ 讓 AI 根據上下文生成 → 更精準、更有深度"
+        ),
+    },
+    {
+        "id": "Q4",
+        "title": "先求廣度的完整性、再求深度的專業性",
+        "prompt": "您希望 AI 從哪些面向深入分析？",
+        "hint": (
+            "例如：\n"
+            "  • 你有什麼想法？以執行者角度詳細說明內容（步驟、規劃、分析…）\n"
+            "  • 有什麼挑戰與風險？\n"
+            "  • 有什麼價值？\n"
+            "  • 有什麼隱性成本？\n"
+            "  • 有什麼策略？"
+        ),
+    },
+    {
+        "id": "Q5",
+        "title": "給予範本，依套路回答",
+        "prompt": "請提供您希望 AI 參考的範本或輸出格式（Few-shot 示例）",
+        "hint": (
+            "例如：\n"
+            "  • 提供一個您滿意的過去輸出範例\n"
+            "  • 指定結構：如「每個分析包含：現況 → 問題 → 建議 → 預期效益」\n"
+            "  • Few-shot 提示：給出 1~3 個輸入/輸出對照範例，讓 AI 學習套路"
+        ),
+    },
+    {
+        "id": "Q6",
+        "title": "給予限制，約束範圍及輸出格式",
+        "prompt": "請說明您的限制條件與輸出格式要求",
+        "hint": (
+            "範疇限制（例如）：\n"
+            "  • 僅限特定產業/情境\n"
+            "  • 不討論法規以外的推測\n"
+            "  • 只針對目前公司規模\n"
+            "  • 不代替使用者做最終決定\n"
+            "  • 不站在推銷立場\n"
+            "  • 以一年期來評估\n"
+            "  • 不增加人力編制\n"
+            "  • 以現有資源評估可行性\n\n"
+            "格式限制（例如）：\n"
+            "  • 條列、表格、步驟\n"
+            "  • 欄位包含 xxx、列包含 xxx\n"
+            "  • 限制字數\n"
+            "  • 網路社群行銷風格、emoji\n"
+            "  • 給投資人、給主管、給潛在客戶\n"
+            "  • 口語式翻譯、正式商務信件翻譯"
+        ),
+    },
+    {
+        "id": "Q7",
+        "title": "分階段提問、再整合",
+        "prompt": "您希望將任務拆解為哪幾個階段？請說明各階段的目標與順序",
+        "hint": (
+            "例如：\n"
+            "  • 第一階段：先整理現況與問題清單\n"
+            "  • 第二階段：針對每個問題提出解決方案\n"
+            "  • 第三階段：彙整成完整的行動計畫\n"
+            "  → 最後再整合三個階段的輸出，產出最終報告"
+        ),
+    },
+    {
+        "id": "Q8",
+        "title": "探究原因及過程",
+        "prompt": "您希望 AI 針對哪些環節追問原因、探索背後邏輯或過程？",
+        "hint": (
+            "例如：\n"
+            "  • 為什麼這個做法會比其他方案更有效？\n"
+            "  • 這個結論是怎麼推導出來的？\n"
+            "  • 有哪些隱含假設？\n"
+            "  • 如果條件改變，結論會如何調整？\n"
+            "  • 請逐步說明推理過程（Chain of Thought）"
+        ),
+    },
+]
+
+# --- 4. 定義元提示詞 ---
+META_PROMPT = """你是一個專業的提示詞工程專家。根據使用者提供的 8 個面向資訊，生成一個結構完整、高質量的 System Prompt。
+
+生成的 Prompt 必須包含以下結構：
+1. # Role: 角色定義
+2. # Context: 背景資訊
+3. # Goals: 任務目標
+4. # Constraints: 約束條件
+5. # Format: 輸出格式
+
+請確保生成的 Prompt 完整涵蓋使用者提供的所有資訊，並以繁體中文輸出。
+"""
+
+# --- 5. 定義節點邏輯 ---
+def prompt_generator_node(state: PromptState):
+    """根據歷史記錄生成或優化 Prompt"""
+    messages = state["messages"]
+    if not any(isinstance(m, SystemMessage) for m in messages):
+        messages = [SystemMessage(content=META_PROMPT)] + messages
+    response = llm.invoke(messages)
+    return {"messages": [response]}
+
+# --- 6. 構建圖結構 ---
+def build_prompt_graph():
+    workflow = StateGraph(PromptState)
+    workflow.add_node("generator", prompt_generator_node)
+    workflow.set_entry_point("generator")
+    workflow.add_edge("generator", END)
+    return workflow.compile()
+
+# --- 7. 清理終端輸入中的 surrogate 字元 ---
+def sanitize(text: str) -> str:
+    return text.encode("utf-8", errors="ignore").decode("utf-8")
+
+# --- 8. 依序收集使用者輸入 ---
+def collect_answers() -> dict:
+    answers = {}
+    print("\n" + "=" * 60)
+    print("  📋 請依序回答以下 8 個問題，協助 AI 生成精準的 Prompt")
+    print("=" * 60)
+
+    for q in QUESTIONS:
+        print(f"\n{'─' * 60}")
+        print(f"  {q['id']}｜{q['title']}")
+        print(f"{'─' * 60}")
+        print(q["hint"])
+        print()
+        answer = sanitize(input(f"✏️  {q['prompt']}（可輸入 '-' 略過）：\n> ").strip())
+        answers[q["id"]] = answer if answer != "-" else "（略過）"
+
+    return answers
+
+# --- 8. 組合使用者資訊為單一訊息 ---
+def build_user_message(answers: dict) -> str:
+    lines = ["以下是我提供的 8 個面向資訊，請根據這些內容生成高質量的 System Prompt：\n"]
+    for q in QUESTIONS:
+        qid = q["id"]
+        lines.append(f"【{qid}｜{q['title']}】")
+        lines.append(answers.get(qid, "（略過）"))
+        lines.append("")
+    return "\n".join(lines)
+
+# --- 主程式 ---
+if __name__ == "__main__":
+    app = build_prompt_graph()
+
+    print("✨ ChatGPT Meta-Prompt 生成助手已啟動 (輸入 'q' 退出) ✨\n")
+
+    # 第一階段：依序收集 8 個問題的答案
+    answers = collect_answers()
+
+    # 第二階段：生成初稿
+    print(f"\n{'=' * 60}")
+    print("  🤖 正在根據您的輸入生成 Prompt，請稍候…")
+    print(f"{'=' * 60}\n")
+
+    user_msg = build_user_message(answers)
+    history = [HumanMessage(content=user_msg)]
+    result = app.invoke({"messages": history})
+    history = result["messages"]
+
+    ai_msg = result["messages"][-1]
+    print(f"🤖 [生成的 System Prompt]:\n{'─' * 60}\n{ai_msg.content}\n{'─' * 60}")
+
+    # 第三階段：持續優化
+    print("\n📝 您可以繼續提供修改建議來優化 Prompt（輸入 'q' 退出）\n")
+    while True:
+        user_req = sanitize(input("\n👤 你的需求/修改建議: ").strip())
+        if user_req.lower() == 'q':
+            print("再見！祝你寫出完美的 Prompt。")
+            break
+
+        history.append(HumanMessage(content=user_req))
+        result = app.invoke({"messages": history})
+        history = result["messages"]
+
+        ai_msg = result["messages"][-1]
+        print(f"\n🤖 [ChatGPT 建議的 Prompt]:\n{'─' * 60}\n{ai_msg.content}\n{'─' * 60}")
