@@ -225,7 +225,7 @@ def build_user_message(answers: dict) -> str:
 
 WELCOME_MSG = (
     "## ✨ 歡迎使用 提示詞大師 (LangGraph)\n\n"
-    "請依序回答以下 **8 個問題**，協助 AI 為您生成精準的 System Prompt。  \n"
+    "請依序回答以下 **8 個問題**，協助 AI 為您生成精準的 System Prompt & User Prompt。  \n"
     "輸入 `-` 可略過任何問題。\n\n"
     "---\n\n"
     + format_question(QUESTIONS[0], 0)
