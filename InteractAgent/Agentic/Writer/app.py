@@ -1,3 +1,4 @@
+import os
 import gradio as gr
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
@@ -5,7 +6,14 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7)
+_api_key = os.environ.get("OPENAI_API_KEY")
+llm = ChatOpenAI(model="gpt-4o-mini", temperature=0.7) if _api_key else None
+
+_KEY_MISSING_MSG = (
+    "⚠️ **`OPENAI_API_KEY` 尚未設定。**\n\n"
+    "請至 HuggingFace Space → **Settings → Variables and secrets** 新增此 Secret，"
+    "儲存後 Space 會自動重新啟動。"
+)
 
 QUESTIONS = [
     {
@@ -163,6 +171,9 @@ WELCOME_MSG = (
 
 
 def respond(user_message, history, state):
+    if llm is None:
+        return "", history + [{"role": "assistant", "content": _KEY_MISSING_MSG}], state
+
     if not user_message or not user_message.strip():
         return "", history, state
 
