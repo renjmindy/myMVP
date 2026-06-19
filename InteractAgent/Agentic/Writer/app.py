@@ -338,6 +338,7 @@ def respond(user_message, state):
 # ── UI ────────────────────────────────────────────────────────────────────────
 with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
     gr.Markdown("# ✨ 提示詞大師 (LangGraph)")
+    gr.Markdown("*Generate a tailored AI system/user prompt via guided questions*")
 
     # Chatbot is OUTPUT-ONLY — history format is always controlled by our state dict
     chatbot = gr.Chatbot(
