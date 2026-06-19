@@ -154,7 +154,7 @@ def build_user_message(answers: dict) -> str:
 
 
 WELCOME_MSG = (
-    "## ✨ 歡迎使用 Meta-Prompt 生成助手\n\n"
+    "## ✨ 歡迎使用 提示詞大師\n\n"
     "請依序回答以下 **8 個問題**，協助 AI 為您生成精準的 System Prompt。  \n"
     "輸入 `-` 可略過任何問題。\n\n"
     "---\n\n"
@@ -219,8 +219,8 @@ def respond(user_message, history, state):
     return "", history, state
 
 
-with gr.Blocks(title="Meta-Prompt 生成助手") as demo:
-    gr.Markdown("# ✨ Meta-Prompt 生成助手")
+with gr.Blocks(title="提示詞大師") as demo:
+    gr.Markdown("# ✨ 提示詞大師")
 
     chatbot = gr.Chatbot(
         value=[{"role": "assistant", "content": WELCOME_MSG}],

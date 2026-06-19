@@ -1,5 +1,5 @@
 ---
-title: Prompt Master
+title: 提示詞大師
 emoji: ✨
 colorFrom: blue
 colorTo: blue
