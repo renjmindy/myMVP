@@ -226,8 +226,6 @@ with gr.Blocks(title="Meta-Prompt 生成助手") as demo:
         value=[{"role": "assistant", "content": WELCOME_MSG}],
         height=620,
         label="對話視窗",
-        show_copy_button=True,
-        render_markdown=True,
     )
     state = gr.State(None)
 
