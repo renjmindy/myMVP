@@ -206,11 +206,14 @@ WELCOME_MSG = (
 
 
 def respond(user_message, history, state):
+    """Generator: yields intermediate state immediately to keep connection alive."""
     if llm is None:
-        return "", history + [{"role": "assistant", "content": _KEY_MISSING_MSG}], state
+        yield "", history + [{"role": "assistant", "content": _KEY_MISSING_MSG}], state
+        return
 
     if not user_message or not user_message.strip():
-        return "", history, state
+        yield "", history, state
+        return
 
     if state is None:
         state = {"phase": "questions", "q_index": 0, "answers": {}, "lc_history": []}
@@ -227,11 +230,14 @@ def respond(user_message, history, state):
         if state["q_index"] < len(QUESTIONS):
             next_q = QUESTIONS[state["q_index"]]
             bot_msg = format_question(next_q, state["q_index"])
-            history = history + [{"role": "assistant", "content": bot_msg}]
-            return "", history, state
+            yield "", history + [{"role": "assistant", "content": bot_msg}], state
+            return
 
-        # All 8 questions answered — generate
-        history = history + [{"role": "assistant", "content": "✅ 所有問題已回答完畢！正在為您生成 System Prompt，請稍候…"}]
+        # All 8 questions answered — yield "please wait" first so connection stays open
+        wait_msg = "✅ 所有問題已回答完畢！正在為您生成 System Prompt，請稍候…"
+        history = history + [{"role": "assistant", "content": wait_msg}]
+        yield "", history, state
+
         user_msg_content = build_user_message(state["answers"])
         messages = [SystemMessage(content=META_PROMPT), HumanMessage(content=user_msg_content)]
         response = llm.invoke(messages)
@@ -250,19 +256,27 @@ def respond(user_message, history, state):
             "---\n\n"
             "📝 您可以繼續輸入修改建議來優化 Prompt，或直接複製上面的結果使用。"
         )
-        history = history + [{"role": "assistant", "content": result_msg}]
-        return "", history, state
+        # Replace the "please wait" message with the actual result
+        history = history[:-1] + [{"role": "assistant", "content": result_msg}]
+        yield "", history, state
+        return
 
     if state["phase"] == "refine":
+        # Yield empty assistant bubble immediately so the user sees a response is coming
+        history = history + [{"role": "assistant", "content": "⏳ 思考中…"}]
+        yield "", history, state
+
         state["lc_history"].append(HumanMessage(content=user_message))
         messages = [SystemMessage(content=META_PROMPT)] + state["lc_history"]
         response = llm.invoke(messages)
         reply = sanitize(response.content)
         state["lc_history"].append(AIMessage(content=reply))
-        history = history + [{"role": "assistant", "content": reply}]
-        return "", history, state
 
-    return "", history, state
+        history = history[:-1] + [{"role": "assistant", "content": reply}]
+        yield "", history, state
+        return
+
+    yield "", history, state
 
 
 with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
