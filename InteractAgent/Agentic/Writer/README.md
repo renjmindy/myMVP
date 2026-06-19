@@ -1,5 +1,5 @@
 ---
-title: 提示詞大師
+title: 提示詞大師 (LangGraph)
 emoji: ✨
 colorFrom: blue
 colorTo: blue
