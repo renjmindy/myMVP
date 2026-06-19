@@ -1,15 +1,16 @@
 import os
+import base64
 import gradio as gr
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from dotenv import load_dotenv
 
+_IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
+_MIME = {"jpg": "jpeg", "jpeg": "jpeg", "png": "png", "gif": "gif", "webp": "webp", "bmp": "bmp"}
 
-def extract_text(file) -> str:
-    """Extract text from an uploaded file (PDF, DOCX, TXT, or any readable format)."""
-    if file is None:
-        return ""
 
+def _resolve_file(file):
+    """Return (file_path, filename) from whatever Gradio passes."""
     if isinstance(file, dict):
         file_path = file.get("path") or file.get("name", "")
         filename = file.get("orig_name") or os.path.basename(file_path)
@@ -18,9 +19,37 @@ def extract_text(file) -> str:
     else:
         file_path = getattr(file, "name", str(file))
         filename = os.path.basename(file_path)
+    return file_path, filename
 
+
+def analyze_image(file_path: str, filename: str) -> str:
+    """Send an image to GPT-4o-mini vision and return a detailed description."""
+    if llm is None:
+        return f"[🖼 {filename}：OPENAI_API_KEY 未設定，無法分析圖片]"
+    ext = os.path.splitext(filename)[1].lower().lstrip(".")
+    mime = _MIME.get(ext, "jpeg")
+    with open(file_path, "rb") as f:
+        b64 = base64.b64encode(f.read()).decode("utf-8")
+    vision_msg = HumanMessage(content=[
+        {"type": "text", "text": (
+            "請詳細描述這張圖片的所有內容，包括：文字、圖表、表格、流程圖、關鍵數據、版面結構等。"
+            "用繁體中文回答，盡量完整，讓閱讀者無需看圖也能理解圖片傳達的資訊。"
+        )},
+        {"type": "image_url", "image_url": {"url": f"data:image/{mime};base64,{b64}"}},
+    ])
+    response = llm.invoke([vision_msg])
+    return f"[🖼 {filename} — 圖片分析]\n\n{response.content}"
+
+
+def extract_text(file) -> str:
+    """Extract text (or vision description) from an uploaded file."""
+    if file is None:
+        return ""
+    file_path, filename = _resolve_file(file)
     ext = os.path.splitext(filename)[1].lower()
     try:
+        if ext in _IMAGE_EXTS:
+            return analyze_image(file_path, filename)
         if ext == ".pdf":
             import pypdf
             reader = pypdf.PdfReader(file_path)
@@ -329,8 +358,11 @@ with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
 
     with gr.Row():
         file_upload = gr.File(
-            label="📎 上傳文件（PDF、Word、TXT、CSV、MD…）",
-            file_types=[".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".xml", ".html"],
+            label="📎 上傳文件或圖片（PDF、Word、TXT、PNG、JPG、WEBP…）",
+            file_types=[
+                ".pdf", ".docx", ".txt", ".md", ".csv", ".json", ".xml", ".html",
+                ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp",
+            ],
             scale=1,
         )
 
