@@ -10,7 +10,6 @@ def extract_text(file) -> str:
     if file is None:
         return ""
 
-    # Gradio 6 passes a dict; older versions pass a path or file object
     if isinstance(file, dict):
         file_path = file.get("path") or file.get("name", "")
         filename = file.get("orig_name") or os.path.basename(file_path)
@@ -25,9 +24,7 @@ def extract_text(file) -> str:
         if ext == ".pdf":
             import pypdf
             reader = pypdf.PdfReader(file_path)
-            content = "\n".join(
-                p.extract_text() for p in reader.pages if p.extract_text()
-            )
+            content = "\n".join(p.extract_text() for p in reader.pages if p.extract_text())
         elif ext == ".docx":
             import docx
             doc = docx.Document(file_path)
@@ -38,6 +35,7 @@ def extract_text(file) -> str:
         return f"[📎 {filename}]\n\n{content}"
     except Exception as e:
         return f"[無法讀取 {filename}：{e}]"
+
 
 load_dotenv()
 
@@ -205,22 +203,40 @@ WELCOME_MSG = (
 )
 
 
-def respond(user_message, history, state):
-    """Generator: yields intermediate state immediately to keep connection alive."""
-    if llm is None:
-        yield "", history + [{"role": "assistant", "content": _KEY_MISSING_MSG}], state
-        return
+def make_state():
+    """Return a fresh session state dict with chat history pre-loaded."""
+    return {
+        "phase": "questions",
+        "q_index": 0,
+        "answers": {},
+        "lc_history": [],
+        # chat_history is the single source of truth for the Chatbot component
+        "chat_history": [{"role": "assistant", "content": WELCOME_MSG}],
+    }
 
-    if not user_message or not user_message.strip():
-        yield "", history, state
-        return
 
+def respond(user_message, state):
+    """Generator — chatbot is OUTPUT-ONLY; all history lives in state["chat_history"]."""
     if state is None:
-        state = {"phase": "questions", "q_index": 0, "answers": {}, "lc_history": []}
+        state = make_state()
 
-    user_message = sanitize(user_message.strip())
-    history = history + [{"role": "user", "content": user_message}]
+    if llm is None:
+        state["chat_history"] = state["chat_history"] + [
+            {"role": "assistant", "content": _KEY_MISSING_MSG}
+        ]
+        yield "", state["chat_history"], state
+        return
 
+    user_message = sanitize((user_message or "").strip())
+    if not user_message:
+        yield "", state["chat_history"], state
+        return
+
+    state["chat_history"] = state["chat_history"] + [
+        {"role": "user", "content": user_message}
+    ]
+
+    # ── Question phase ──────────────────────────────────────────────────────
     if state["phase"] == "questions":
         q_index = state["q_index"]
         qid = QUESTIONS[q_index]["id"]
@@ -230,13 +246,18 @@ def respond(user_message, history, state):
         if state["q_index"] < len(QUESTIONS):
             next_q = QUESTIONS[state["q_index"]]
             bot_msg = format_question(next_q, state["q_index"])
-            yield "", history + [{"role": "assistant", "content": bot_msg}], state
+            state["chat_history"] = state["chat_history"] + [
+                {"role": "assistant", "content": bot_msg}
+            ]
+            yield "", state["chat_history"], state
             return
 
-        # All 8 questions answered — yield "please wait" first so connection stays open
+        # All 8 answered — show "please wait" immediately, then generate
         wait_msg = "✅ 所有問題已回答完畢！正在為您生成 System Prompt，請稍候…"
-        history = history + [{"role": "assistant", "content": wait_msg}]
-        yield "", history, state
+        state["chat_history"] = state["chat_history"] + [
+            {"role": "assistant", "content": wait_msg}
+        ]
+        yield "", state["chat_history"], state
 
         user_msg_content = build_user_message(state["answers"])
         messages = [SystemMessage(content=META_PROMPT), HumanMessage(content=user_msg_content)]
@@ -256,15 +277,19 @@ def respond(user_message, history, state):
             "---\n\n"
             "📝 您可以繼續輸入修改建議來優化 Prompt，或直接複製上面的結果使用。"
         )
-        # Replace the "please wait" message with the actual result
-        history = history[:-1] + [{"role": "assistant", "content": result_msg}]
-        yield "", history, state
+        # Replace the "please wait" bubble with the actual result
+        state["chat_history"] = state["chat_history"][:-1] + [
+            {"role": "assistant", "content": result_msg}
+        ]
+        yield "", state["chat_history"], state
         return
 
+    # ── Refinement phase ────────────────────────────────────────────────────
     if state["phase"] == "refine":
-        # Yield empty assistant bubble immediately so the user sees a response is coming
-        history = history + [{"role": "assistant", "content": "⏳ 思考中…"}]
-        yield "", history, state
+        state["chat_history"] = state["chat_history"] + [
+            {"role": "assistant", "content": "⏳ 思考中…"}
+        ]
+        yield "", state["chat_history"], state
 
         state["lc_history"].append(HumanMessage(content=user_message))
         messages = [SystemMessage(content=META_PROMPT)] + state["lc_history"]
@@ -272,16 +297,20 @@ def respond(user_message, history, state):
         reply = sanitize(response.content)
         state["lc_history"].append(AIMessage(content=reply))
 
-        history = history[:-1] + [{"role": "assistant", "content": reply}]
-        yield "", history, state
+        state["chat_history"] = state["chat_history"][:-1] + [
+            {"role": "assistant", "content": reply}
+        ]
+        yield "", state["chat_history"], state
         return
 
-    yield "", history, state
+    yield "", state["chat_history"], state
 
 
+# ── UI ────────────────────────────────────────────────────────────────────────
 with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
     gr.Markdown("# ✨ 提示詞大師 (LangGraph)")
 
+    # Chatbot is OUTPUT-ONLY — history format is always controlled by our state dict
     chatbot = gr.Chatbot(
         value=[{"role": "assistant", "content": WELCOME_MSG}],
         height=620,
@@ -305,16 +334,10 @@ with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
             scale=1,
         )
 
-    def submit(user_message, history, state):
-        return respond(user_message, history, state)
-
-    def on_upload(file):
-        """Extract text from uploaded file and populate the input box."""
-        return extract_text(file)
-
-    msg.submit(submit, [msg, chatbot, state], [msg, chatbot, state])
-    submit_btn.click(submit, [msg, chatbot, state], [msg, chatbot, state])
-    file_upload.upload(on_upload, inputs=[file_upload], outputs=[msg])
+    # msg and state are inputs; msg (clear), chatbot, state are outputs
+    msg.submit(respond, [msg, state], [msg, chatbot, state])
+    submit_btn.click(respond, [msg, state], [msg, chatbot, state])
+    file_upload.upload(lambda f: extract_text(f), inputs=[file_upload], outputs=[msg])
 
 
 if __name__ == "__main__":
