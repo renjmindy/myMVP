@@ -219,12 +219,11 @@ def respond(user_message, history, state):
     return "", history, state
 
 
-with gr.Blocks(title="Meta-Prompt 生成助手", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="Meta-Prompt 生成助手") as demo:
     gr.Markdown("# ✨ Meta-Prompt 生成助手")
 
     chatbot = gr.Chatbot(
         value=[{"role": "assistant", "content": WELCOME_MSG}],
-        type="messages",
         height=620,
         label="對話視窗",
         show_copy_button=True,
@@ -249,4 +248,4 @@ with gr.Blocks(title="Meta-Prompt 生成助手", theme=gr.themes.Soft()) as demo
 
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860)
+    demo.launch(server_name="0.0.0.0", server_port=7860, theme=gr.themes.Soft())
