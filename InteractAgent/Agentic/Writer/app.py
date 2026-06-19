@@ -351,10 +351,11 @@ with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
         msg = gr.Textbox(
             placeholder="請在此輸入您的回覆，按 Enter 或點擊「送出」…",
             show_label=False,
-            scale=9,
+            scale=8,
             autofocus=True,
         )
         submit_btn = gr.Button("送出 ➤", scale=1, variant="primary")
+        clear_btn = gr.Button("清除", scale=1, variant="secondary")
 
     with gr.Row():
         file_upload = gr.File(
@@ -366,9 +367,13 @@ with gr.Blocks(title="提示詞大師 (LangGraph)") as demo:
             scale=1,
         )
 
-    # msg and state are inputs; msg (clear), chatbot, state are outputs
+    def clear():
+        fresh = make_state()
+        return "", fresh["chat_history"], None
+
     msg.submit(respond, [msg, state], [msg, chatbot, state])
     submit_btn.click(respond, [msg, state], [msg, chatbot, state])
+    clear_btn.click(clear, outputs=[msg, chatbot, state])
     file_upload.upload(lambda f: extract_text(f), inputs=[file_upload], outputs=[msg])
 
 
