@@ -525,6 +525,24 @@ with gr.Blocks(title="AI課程教材設計 & 計畫執行工作流", theme=gr.th
             "# 行銷計畫執行工作流\n"
             "自動將複雜問題拆解為執行步驟，逐步執行並給出完整分析結果。"
         )
+
+        with gr.Accordion("📂 上傳文件或圖表（選填）", open=False):
+            gr.Markdown(
+                "支援格式：**PDF、Word (.docx)、PowerPoint (.pptx)、"
+                "Excel (.xlsx/.csv)、純文字 (.txt/.md/.json)、"
+                "圖表圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)**\n\n"
+                "上傳後將自動擷取內容並附加至下方問題輸入框。"
+            )
+            file_upload2 = gr.File(
+                label="拖曳或點擊上傳（可選取多個檔案）",
+                file_types=[
+                    ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv",
+                    ".txt", ".md", ".json",
+                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+                ],
+                file_count="multiple",
+            )
+
         question_input = gr.Textbox(
             label="輸入您的問題",
             placeholder="例如：如何通過三個步驟建立一個高效的 AI 自動化工作流？",
@@ -535,6 +553,12 @@ with gr.Blocks(title="AI課程教材設計 & 計畫執行工作流", theme=gr.th
             plan_box = gr.Textbox(label="📋 執行計畫", lines=8, interactive=False)
             steps_box = gr.Markdown(label="✅ 執行步驟與結果")
         final_box = gr.Textbox(label="🎯 最終答案", lines=5, interactive=False)
+
+        file_upload2.upload(
+            fn=extract_files_text,
+            inputs=[file_upload2],
+            outputs=[question_input],
+        )
 
         run_btn.click(
             fn=run_workflow,
