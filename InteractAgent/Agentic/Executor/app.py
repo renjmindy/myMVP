@@ -422,98 +422,232 @@ def run_course_design(materials: str, topic_focus: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 2 — 行銷計畫執行工作流 (Plan-Execute)
+# TAB 2 — 客戶提案總監 (Plan-Execute架構)
 # ══════════════════════════════════════════════════════════════════════════════
 
-class PlanExecuteState(TypedDict):
+PROPOSAL_AGENT_SYSTEM = """
+你是一位 B2B 製造業客戶提案總監，名稱為「客戶提案總監」。
+你擅長整合商品型錄圖片、Excel 報價表、客戶需求、業務筆記與初步大綱，
+產出圖文並茂、有深度、有邏輯、可交付給客戶的正式提案計畫書。
+
+## 主要目標
+協助使用者把零散資料整理成正式商務提案，
+讓客戶快速理解問題、看見方案價值、降低採購疑慮，
+並願意安排下一步會議、PoC 試點或下訂。
+
+## 目標受眾
+- 製造業客戶主管
+- 採購決策者
+- 廠務與品保主管
+- 經營者
+- 業務與提案團隊
+
+## 輸入資料處理方式
+- **商品型錄圖片**：整理產品名稱、功能重點、規格資訊與建議放置章節
+- **Excel 報價表**：整理報價項目、金額摘要、付款條件，轉成客戶看得懂的投資說明
+- **客戶需求**：分析客戶現況、痛點、決策因素與可能疑慮
+- **業務筆記**：將零散想法轉成提案主軸、銷售論點與客戶利益
+- **提案大綱**：補強原始大綱，建立正式商務提案架構
+
+## 思考規則
+- 先理解客戶痛點，再介紹產品
+- 每一個產品功能都要對應一個客戶問題
+- 每一個報價項目都要說明它帶來的價值
+- 提案不能只是產品型錄重排，也不能只是報價單整理
+- 必須有現況診斷、解決方案、導入流程、效益、風險配套與下一步行動
+- 不得編造不存在的數字、成果、保證或客戶案例
+- 資料不足時，請標示「需補充資料」，並列出建議補充問題
+- 語氣要正式、清楚、具商務說服力，適合提供給企業客戶閱讀
+
+## 銷售邏輯
+- 先說明客戶目前可能承擔的風險或損失
+- 再說明方案如何降低風險、提升效率或改善管理
+- 將技術規格轉成客戶能理解的營運價值
+- 將報價金額轉成投資項目與合作價值
+- 建議採用「先 PoC 試點，再多線擴展」降低客戶疑慮
+- 結尾必須給出明確下一步行動
+
+## 寫作風格
+語氣：正式、專業、清楚、有商務說服力
+避免：空泛口號、過度誇張、制式模板語氣、只列規格不說價值、只列價格不說投資理由
+偏好：客戶痛點導向、問題診斷導向、解決方案導向、低風險試點導向、成效驗證導向、下一步行動導向
+
+## 輸出前品質檢查
+- 是否清楚說明客戶痛點？
+- 是否把產品規格轉成客戶價值？
+- 是否把報價表轉成投資說明？
+- 是否有圖片配置建議？
+- 是否有必要表格？
+- 是否有導入流程？
+- 是否有風險配套？
+- 是否有下一步行動？
+- 是否避免誇大與亂編？
+- 是否像一份可交付給客戶的正式商務提案？
+
+若資料不足，請先列出不足處，但仍要依現有資料產出可用初稿。
+"""
+
+PROPOSAL_SECTIONS = [
+    "提案封面資訊",
+    "執行摘要",
+    "客戶現況與問題診斷",
+    "本次提案核心主張",
+    "解決方案總覽",
+    "商品型錄圖片整合說明",
+    "產品與規格摘要",
+    "客戶痛點與方案對應表",
+    "導入流程與時程規劃",
+    "報價與投資說明",
+    "預期效益與驗證方式",
+    "風險與配套措施",
+    "為什麼選擇我們",
+    "建議下一步",
+    "附錄",
+]
+
+PROPOSAL_SECTION_FORMATS = {
+    "提案封面資訊": "請列出：提案名稱、提案對象（公司名稱與聯絡人）、提案日期、提案單位、版本號。",
+    "執行摘要": "用200字以內濃縮整份提案的核心價值主張、方案亮點與建議下一步行動。",
+    "客戶現況與問題診斷": "說明客戶目前面臨的問題、風險與損失，以及不解決問題的代價。",
+    "本次提案核心主張": "用一段話說明本次提案的核心主張與差異化價值。",
+    "解決方案總覽": "概述提案的解決方案架構與模組，搭配圖表說明整體方案邏輯。",
+    "商品型錄圖片整合說明": "針對每張圖片提供：建議放置章節、圖片標題、圖片說明文字、在提案中的說服作用。若無圖片資料，請標示需補充並說明建議拍攝或準備的圖片類型。",
+    "產品與規格摘要": """\
+請用以下表格格式輸出：
+| 產品名稱 | 型號／規格 | 核心功能 | 適用場景 | 備註 |
+|---|---|---|---|---|""",
+    "客戶痛點與方案對應表": """\
+請用以下表格格式輸出：
+| 客戶痛點 | 目前影響 | 本方案如何解決 | 預期改善 |
+|---|---|---|---|""",
+    "導入流程與時程規劃": """\
+請用以下表格格式輸出：
+| 階段 | 工作項目 | 負責方 | 時程 | 交付物 |
+|---|---|---|---|---|""",
+    "報價與投資說明": """\
+請用以下表格格式輸出：
+| 項目 | 說明 | 數量 | 單價 | 小計 | 客戶獲得的價值 |
+|---|---|---|---|---|---|
+最後加上付款條件與合作期限說明。若無報價資料，請標示需補充。""",
+    "預期效益與驗證方式": """\
+請用以下表格格式輸出：
+| 效益項目 | 目前狀況 | 導入後預期 | 驗證方式 | 衡量指標 |
+|---|---|---|---|---|""",
+    "風險與配套措施": """\
+請用以下表格格式輸出：
+| 潛在風險 | 風險等級 | 配套措施 | 責任方 |
+|---|---|---|---|""",
+    "為什麼選擇我們": "說明核心差異化優勢、過往經驗、服務保障與合作誠意，語氣正式有說服力。",
+    "建議下一步": """\
+請用以下表格格式輸出：
+| 步驟 | 行動項目 | 建議時間 | 負責方 |
+|---|---|---|---|
+最後加上一段促成下一步會議或 PoC 試點的邀請語。""",
+    "附錄": "放置補充資料、參考規格、詞彙說明，或列出「需補充資料」清單與建議補充問題。",
+}
+
+class ProposalState(TypedDict):
     input: str
     plan: List[str]
     past_steps: Annotated[List[Tuple[str, str]], operator.add]
     response: str
 
-class Plan(BaseModel):
-    """計畫列表"""
-    steps: List[str] = Field(description="需要執行的步驟列表")
+class ProposalPlan(BaseModel):
+    """提案章節計畫"""
+    steps: List[str] = Field(description="依序需要產出的提案章節名稱列表")
 
-class Response(BaseModel):
-    """最終回覆"""
-    response: str
-
-def planner_node(state: PlanExecuteState):
-    prompt = ChatPromptTemplate.from_template(
-        "你是一個高級規劃助手。針對問題: {input}，拆解為詳細的執行步驟。不要回答問題，只需列出步驟。"
-    )
-    planner = prompt | llm_mini.with_structured_output(Plan)
+def proposal_planner(state: ProposalState):
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", PROPOSAL_AGENT_SYSTEM),
+        ("human",
+         "請分析以下資料，決定最適合的提案章節順序。\n"
+         "可選章節：" + "／".join(PROPOSAL_SECTIONS) + "\n"
+         "請列出所有章節，依最佳商務提案邏輯排序。\n\n"
+         "資料內容：\n{input}")
+    ])
+    planner = prompt | llm_4o.with_structured_output(ProposalPlan)
     result = planner.invoke({"input": state["input"]})
     return {"plan": result.steps}
 
-def executor_node(state: PlanExecuteState):
-    task = state["plan"][0]
-    prompt = ChatPromptTemplate.from_template(
-        "你是一個執行助手。請針對以下任務給出具體的執行結果與分析：\n\n任務：{task}\n\n背景問題：{input}"
-    )
-    chain = prompt | llm_mini
-    result = chain.invoke({"task": task, "input": state["input"]})
-    return {"past_steps": [(task, result.content)]}
+def proposal_executor(state: ProposalState):
+    section = state["plan"][0]
+    completed = "\n\n".join(
+        f"### {s}\n{r}" for s, r in state["past_steps"]
+    ) if state["past_steps"] else "（尚無已完成章節）"
+    section_key = next((k for k in PROPOSAL_SECTION_FORMATS if k in section), None)
+    format_hint = f"\n\n**格式要求：**\n{PROPOSAL_SECTION_FORMATS[section_key]}" if section_key else ""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", PROPOSAL_AGENT_SYSTEM),
+        ("human",
+         "原始資料：\n{input}\n\n"
+         "已完成章節（供參考，保持一致性）：\n{completed}\n\n"
+         "請現在產出「{section}」的完整內容。內容要具體、正式、可直接交付給客戶。{format_hint}")
+    ])
+    chain = prompt | llm_4o
+    result = chain.invoke({
+        "input": state["input"],
+        "completed": completed,
+        "section": section,
+        "format_hint": format_hint,
+    })
+    return {"past_steps": [(section, result.content)]}
 
-def replanner_node(state: PlanExecuteState):
-    prompt = ChatPromptTemplate.from_template(
-        "原始問題: {input}\n已完成步驟: {past_steps}\n當前計畫: {plan}\n"
-        "如果任務已完成，請給出最終回答；如果未完成，請更新剩餘計畫。只回答最終結論或更新步驟。"
-    )
+def proposal_replanner(state: ProposalState):
     remaining = state["plan"][1:]
     if not remaining:
-        chain = prompt | llm_mini
-        result = chain.invoke({
-            "input": state["input"],
-            "past_steps": state["past_steps"],
-            "plan": state["plan"],
-        })
-        return {"response": result.content}
+        full_output = "\n\n---\n\n".join(
+            f"## {section}\n\n{content}"
+            for section, content in state["past_steps"]
+        )
+        return {"response": full_output}
     return {"plan": remaining}
 
-def should_end(state: PlanExecuteState):
+def proposal_should_end(state: ProposalState):
     return "end" if state.get("response") else "continue"
 
-def build_graph():
-    workflow = StateGraph(PlanExecuteState)
-    workflow.add_node("planner", planner_node)
-    workflow.add_node("executor", executor_node)
-    workflow.add_node("re_planner", replanner_node)
-    workflow.set_entry_point("planner")
-    workflow.add_edge("planner", "executor")
-    workflow.add_edge("executor", "re_planner")
-    workflow.add_conditional_edges("re_planner", should_end, {"continue": "executor", "end": END})
-    return workflow.compile()
+def build_proposal_graph():
+    wf = StateGraph(ProposalState)
+    wf.add_node("planner", proposal_planner)
+    wf.add_node("executor", proposal_executor)
+    wf.add_node("re_planner", proposal_replanner)
+    wf.set_entry_point("planner")
+    wf.add_edge("planner", "executor")
+    wf.add_edge("executor", "re_planner")
+    wf.add_conditional_edges("re_planner", proposal_should_end, {"continue": "executor", "end": END})
+    return wf.compile()
 
-app_graph = build_graph()
+proposal_graph = build_proposal_graph()
 
-def run_workflow(question: str):
-    if not question.strip():
-        return "", "", ""
+def run_proposal_design(materials: str):
+    if not materials.strip():
+        yield "⚠️ 請輸入資料後再送出。"
+        return
 
-    plan_output = ""
-    steps_output = ""
-    final_output = ""
+    output = ""
+    plan_shown = False
 
-    for event in app_graph.stream({"input": question}, {"recursion_limit": 20}):
+    for event in proposal_graph.stream({"input": materials}, {"recursion_limit": 40}):
         for node_name, value in event.items():
-            if node_name == "planner" and "plan" in value:
-                plan_output = "\n".join(f"{i+1}. {s}" for i, s in enumerate(value["plan"]))
+            if node_name == "planner" and "plan" in value and not plan_shown:
+                plan_shown = True
+                output = "### 📋 提案章節規劃\n" + "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(value["plan"])
+                ) + "\n\n---\n\n*逐章節生成中……*\n\n"
+                yield output
             elif node_name == "executor" and "past_steps" in value:
-                for task, result in value["past_steps"]:
-                    steps_output += f"**任務：** {task}\n\n**結果：** {result}\n\n---\n\n"
+                for section, content in value["past_steps"]:
+                    output = output.replace("*逐章節生成中……*\n\n", "")
+                    output += f"## {section}\n\n{content}\n\n---\n\n*逐章節生成中……*\n\n"
+                    yield output
             elif node_name == "re_planner" and value.get("response"):
-                final_output = value["response"]
-
-    return plan_output, steps_output.strip(), final_output
+                yield value["response"]
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
-with gr.Blocks(title="AI課程教材設計 & 計畫執行工作流", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.themes.Soft()) as demo:
 
     # ── Tab 1 ──────────────────────────────────────────────────────────────────
     with gr.Tab("📚 課程教材轉譯Agent"):
@@ -619,18 +753,19 @@ with gr.Blocks(title="AI課程教材設計 & 計畫執行工作流", theme=gr.th
         )
 
     # ── Tab 2 ──────────────────────────────────────────────────────────────────
-    with gr.Tab("📋 行銷計畫執行工作流"):
+    with gr.Tab("📑 客戶提案總監"):
         gr.Markdown(
-            "# 行銷計畫執行工作流\n"
-            "自動將複雜問題拆解為執行步驟，逐步執行並給出完整分析結果。"
+            "# 客戶提案總監\n"
+            "整合型錄圖片、報價表、客戶需求與業務筆記，以 **Plan-Execute** 架構逐章節生成"
+            "可直接交付給 B2B 製造業客戶的正式提案計畫書。"
         )
 
-        with gr.Accordion("📂 上傳文件或圖表（選填）", open=False):
+        with gr.Accordion("📂 上傳提案素材（選填）", open=False):
             gr.Markdown(
-                "支援格式：**PDF、Word (.docx)、PowerPoint (.pptx)、"
-                "Excel (.xlsx/.csv)、純文字 (.txt/.md/.json)、"
-                "圖表圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)**\n\n"
-                "上傳後將自動擷取內容並附加至下方問題輸入框。"
+                "支援格式：**商品型錄圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)、"
+                "Excel 報價表 (.xlsx/.xls/.csv)、Word 需求文件 (.docx)、"
+                "PowerPoint 大綱 (.pptx)、PDF、純文字 (.txt/.md/.json)**\n\n"
+                "可同時上傳多個檔案（型錄圖片＋報價表＋需求說明），內容將自動擷取並填入下方輸入框。"
             )
             file_upload2 = gr.File(
                 label="拖曳或點擊上傳（可選取多個檔案）",
@@ -642,36 +777,75 @@ with gr.Blocks(title="AI課程教材設計 & 計畫執行工作流", theme=gr.th
                 file_count="multiple",
             )
 
-        question_input = gr.Textbox(
-            label="輸入您的問題",
-            placeholder="例如：如何通過三個步驟建立一個高效的 AI 自動化工作流？",
-            lines=3,
-        )
-        run_btn = gr.Button("開始執行", variant="primary")
         with gr.Row():
-            plan_box = gr.Textbox(label="📋 執行計畫", lines=8, interactive=False)
-            steps_box = gr.Markdown(label="✅ 執行步驟與結果")
-        final_box = gr.Textbox(label="🎯 最終答案", lines=5, interactive=False)
+            with gr.Column(scale=1):
+                proposal_input = gr.Textbox(
+                    label="提案素材（可直接貼上或由上傳自動填入）",
+                    placeholder=(
+                        "請貼上任何與提案相關的資料，例如：\n"
+                        "・客戶背景與需求說明\n"
+                        "・業務拜訪筆記\n"
+                        "・產品功能與規格\n"
+                        "・報價項目與金額\n"
+                        "・提案初稿大綱"
+                    ),
+                    lines=12,
+                )
+                propose_btn = gr.Button("開始生成提案", variant="primary", size="lg")
+                propose_clear_btn = gr.Button("清除", size="lg")
+            with gr.Column(scale=2):
+                proposal_output = gr.Markdown(
+                    label="提案計畫書",
+                    value="*送出資料後，Agent 將規劃提案章節並逐一生成，結果即時顯示於此……*",
+                )
+                with gr.Row():
+                    proposal_download_btn = gr.Button("📥 下載 HTML", size="lg")
+                    proposal_download_file = gr.File(
+                        label="下載檔案",
+                        visible=False,
+                        interactive=False,
+                    )
+
+        gr.Examples(
+            examples=[
+                [
+                    "客戶：台中某中型汽車零件製造商，約300人。\n"
+                    "現況：廠內品檢仍靠人工目視，每班3名品檢員，月均漏檢率約2.3%，"
+                    "客訴每月4-6件，退貨損失約15萬元。\n"
+                    "需求：希望導入自動光學檢測（AOI）系統，預算約200-300萬，"
+                    "希望能在Q3完成首條產線導入。\n"
+                    "我方產品：工業級AOI視覺檢測系統，每套98萬，含安裝、教育訓練與一年保固。"
+                ],
+                [
+                    "客戶：新竹科技廠，主要生產PCB電路板，客戶要求導入碳排追蹤系統。\n"
+                    "痛點：目前沒有系統化碳排資料，面臨供應鏈稽核壓力，今年底前必須提交ESG報告。\n"
+                    "我方方案：碳排管理SaaS平台，月費8萬，含資料收集模組、報告產生器與顧問輔導。\n"
+                    "業務筆記：客戶採購主管希望先做3個月PoC，成效好再全廠擴展。"
+                ],
+            ],
+            inputs=[proposal_input],
+        )
 
         file_upload2.upload(
             fn=extract_files_text,
             inputs=[file_upload2],
-            outputs=[question_input],
+            outputs=[proposal_input],
         )
-
-        run_btn.click(
-            fn=run_workflow,
-            inputs=[question_input],
-            outputs=[plan_box, steps_box, final_box],
+        propose_btn.click(
+            fn=run_proposal_design,
+            inputs=[proposal_input],
+            outputs=[proposal_output],
         )
-
-        gr.Examples(
-            examples=[
-                ["如何通過三個步驟建立一個高效的 AI 自動化工作流？"],
-                ["請規劃一個新產品上市的行銷策略，包含社群媒體、SEO 和廣告投放。"],
-                ["如何在三個月內提升電商網站的轉換率？"],
-            ],
-            inputs=[question_input],
+        propose_clear_btn.click(
+            fn=lambda: (None, "",
+                        "*送出資料後，Agent 將規劃提案章節並逐一生成，結果即時顯示於此……*",
+                        gr.update(visible=False)),
+            outputs=[file_upload2, proposal_input, proposal_output, proposal_download_file],
+        )
+        proposal_download_btn.click(
+            fn=lambda content: (generate_html_file(content), gr.update(visible=True)),
+            inputs=[proposal_output],
+            outputs=[proposal_download_file, proposal_download_file],
         )
 
 if __name__ == "__main__":
