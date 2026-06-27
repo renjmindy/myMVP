@@ -704,7 +704,7 @@ def run_proposal_design(materials: str, user_prompt: str = ""):
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
-with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
+with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as demo:
 
     # ── Tab 1 ──────────────────────────────────────────────────────────────────
     with gr.Tab("📚 課程教材轉譯Agent"):

@@ -1,5 +1,5 @@
 ---
-title: AI課程教材設計 & 客戶提案總監
+title: AI課程教材設計&客戶提案總監 (LangGraph)
 emoji: 🤖
 colorFrom: blue
 colorTo: yellow
