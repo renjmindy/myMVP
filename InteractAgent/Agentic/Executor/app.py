@@ -1,4 +1,5 @@
 import os
+os.environ["GRADIO_MCP_SERVER"] = "false"
 import base64
 import tempfile
 from typing import List, Tuple, Annotated, TypedDict
