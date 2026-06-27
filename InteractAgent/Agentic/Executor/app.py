@@ -749,8 +749,15 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
                 # ── Download section ────────────────────────────────────────────
                 with gr.Row():
                     download_btn = gr.Button("📥 下載 HTML", size="lg")
+                    download_word_btn = gr.Button("📄 下載 Word", size="lg")
+                with gr.Row():
                     download_file = gr.File(
-                        label="下載檔案",
+                        label="HTML 檔案",
+                        visible=False,
+                        interactive=False,
+                    )
+                    download_word_file = gr.File(
+                        label="Word 檔案",
                         visible=False,
                         interactive=False,
                     )
@@ -794,14 +801,19 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
         clear_btn.click(
             fn=lambda: (None, "", "自動判斷",
                         "*送出資料後，Agent 將規劃章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(visible=False)),
+                        gr.update(visible=False), gr.update(visible=False)),
             outputs=[file_upload, materials_input, topic_dropdown,
-                     design_output, download_file],
+                     design_output, download_file, download_word_file],
         )
         download_btn.click(
             fn=lambda content: (generate_html_file(content), gr.update(visible=True)),
             inputs=[design_output],
             outputs=[download_file, download_file],
+        )
+        download_word_btn.click(
+            fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
+            inputs=[design_output],
+            outputs=[download_word_file, download_word_file],
         )
 
     # ── Tab 2 ──────────────────────────────────────────────────────────────────
