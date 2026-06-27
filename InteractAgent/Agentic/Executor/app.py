@@ -150,6 +150,58 @@ def generate_html_file(markdown_content: str):
     tmp.close()
     return tmp.name
 
+def generate_word_file(markdown_content: str):
+    if not markdown_content or markdown_content.startswith("*送出資料後"):
+        return None
+    import re
+    from docx import Document
+    from docx.shared import RGBColor
+
+    doc = Document()
+    lines = markdown_content.split("\n")
+    i = 0
+    while i < len(lines):
+        line = lines[i].rstrip()
+        if line.startswith("### "):
+            doc.add_heading(line[4:].strip(), level=3)
+        elif line.startswith("## "):
+            doc.add_heading(line[3:].strip(), level=2)
+        elif line.startswith("# "):
+            doc.add_heading(line[2:].strip(), level=1)
+        elif line.startswith("|"):
+            # collect contiguous table lines
+            table_lines = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                table_lines.append(lines[i])
+                i += 1
+            data_rows = [r for r in table_lines
+                         if not re.match(r"^\|[-| :]+\|$", r.strip())]
+            if data_rows:
+                parsed = [[c.strip() for c in r.strip("|").split("|")]
+                          for r in data_rows]
+                ncols = max(len(r) for r in parsed)
+                tbl = doc.add_table(rows=len(parsed), cols=ncols)
+                tbl.style = "Table Grid"
+                for ri, row in enumerate(parsed):
+                    for ci, cell in enumerate(row):
+                        if ci < ncols:
+                            tbl.cell(ri, ci).text = cell
+            continue
+        elif line.startswith("---") or line == "":
+            i += 1
+            continue
+        else:
+            text = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+            text = re.sub(r"\*(.+?)\*", r"\1", text)
+            if text.strip():
+                doc.add_paragraph(text)
+        i += 1
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".docx")
+    tmp.close()
+    doc.save(tmp.name)
+    return tmp.name
+
 # ══════════════════════════════════════════════════════════════════════════════
 # TAB 1 — AI課程教材轉譯與受眾案例設計Agent (Plan-Execute架構)
 # ══════════════════════════════════════════════════════════════════════════════
@@ -760,12 +812,12 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.theme
             "可直接交付給 B2B 製造業客戶的正式提案計畫書。"
         )
 
-        with gr.Accordion("📂 上傳提案素材（選填）", open=False):
+        with gr.Accordion("📂 上傳文件或圖表（選填）", open=False):
             gr.Markdown(
-                "支援格式：**商品型錄圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)、"
-                "Excel 報價表 (.xlsx/.xls/.csv)、Word 需求文件 (.docx)、"
-                "PowerPoint 大綱 (.pptx)、PDF、純文字 (.txt/.md/.json)**\n\n"
-                "可同時上傳多個檔案（型錄圖片＋報價表＋需求說明），內容將自動擷取並填入下方輸入框。"
+                "支援格式：**PDF、Word (.docx)、PowerPoint (.pptx)、"
+                "Excel (.xlsx/.csv)、純文字 (.txt/.md/.json)、"
+                "圖表圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)**\n\n"
+                "上傳後將自動擷取內容並填入下方輸入框，可再手動補充。"
             )
             file_upload2 = gr.File(
                 label="拖曳或點擊上傳（可選取多個檔案）",
@@ -799,9 +851,16 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.theme
                     value="*送出資料後，Agent 將規劃提案章節並逐一生成，結果即時顯示於此……*",
                 )
                 with gr.Row():
-                    proposal_download_btn = gr.Button("📥 下載 HTML", size="lg")
-                    proposal_download_file = gr.File(
-                        label="下載檔案",
+                    proposal_html_btn = gr.Button("📥 下載 HTML", size="lg")
+                    proposal_word_btn = gr.Button("📄 下載 Word", size="lg")
+                with gr.Row():
+                    proposal_download_html = gr.File(
+                        label="HTML 檔案",
+                        visible=False,
+                        interactive=False,
+                    )
+                    proposal_download_word = gr.File(
+                        label="Word 檔案",
                         visible=False,
                         interactive=False,
                     )
@@ -839,13 +898,19 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.theme
         propose_clear_btn.click(
             fn=lambda: (None, "",
                         "*送出資料後，Agent 將規劃提案章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(visible=False)),
-            outputs=[file_upload2, proposal_input, proposal_output, proposal_download_file],
+                        gr.update(visible=False), gr.update(visible=False)),
+            outputs=[file_upload2, proposal_input, proposal_output,
+                     proposal_download_html, proposal_download_word],
         )
-        proposal_download_btn.click(
+        proposal_html_btn.click(
             fn=lambda content: (generate_html_file(content), gr.update(visible=True)),
             inputs=[proposal_output],
-            outputs=[proposal_download_file, proposal_download_file],
+            outputs=[proposal_download_html, proposal_download_html],
+        )
+        proposal_word_btn.click(
+            fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
+            inputs=[proposal_output],
+            outputs=[proposal_download_word, proposal_download_word],
         )
 
 if __name__ == "__main__":
