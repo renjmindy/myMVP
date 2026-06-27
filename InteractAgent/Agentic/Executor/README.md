@@ -2,7 +2,7 @@
 title: AI課程教材設計 & 客戶提案總監
 emoji: 🤖
 colorFrom: blue
-colorTo: indigo
+colorTo: yellow
 sdk: docker
 app_port: 7860
 pinned: false
