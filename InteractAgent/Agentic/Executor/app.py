@@ -699,7 +699,7 @@ def run_proposal_design(materials: str):
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
-with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
 
     # ── Tab 1 ──────────────────────────────────────────────────────────────────
     with gr.Tab("📚 課程教材轉譯Agent"):
@@ -914,4 +914,4 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監", theme=gr.theme
         )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, mcp_server=False, show_api=False)
+    demo.launch(server_name="0.0.0.0", server_port=7860, mcp_server=False, theme=gr.themes.Soft())
