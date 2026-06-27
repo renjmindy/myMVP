@@ -441,7 +441,9 @@ def build_course_graph():
 
 course_graph = build_course_graph()
 
-def run_course_design(materials: str, topic_focus: str):
+def run_course_design(materials: str, topic_focus: str, user_prompt: str = ""):
+    if user_prompt and user_prompt.strip():
+        materials = materials + f"\n\n---\n使用者額外指示：\n{user_prompt.strip()}"
     if not materials.strip():
         yield "⚠️ 請輸入教材內容後再送出。"
         return
@@ -670,7 +672,9 @@ def build_proposal_graph():
 
 proposal_graph = build_proposal_graph()
 
-def run_proposal_design(materials: str):
+def run_proposal_design(materials: str, user_prompt: str = ""):
+    if user_prompt and user_prompt.strip():
+        materials = materials + f"\n\n---\n使用者額外指示：\n{user_prompt.strip()}"
     if not materials.strip():
         yield "⚠️ 請輸入資料後再送出。"
         return
@@ -739,6 +743,11 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
                     value="自動判斷",
                     label="聚焦課程主題（選填）",
                 )
+                user_prompt1 = gr.Textbox(
+                    label="使用者提示（選填）",
+                    placeholder="可輸入額外指示，例如：聚焦製造業主管受眾、強調實作活動、縮短篇幅……",
+                    lines=3,
+                )
                 design_btn = gr.Button("開始轉譯教材", variant="primary", size="lg")
                 clear_btn = gr.Button("清除", size="lg")
             with gr.Column(scale=2):
@@ -795,14 +804,14 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
 
         design_btn.click(
             fn=run_course_design,
-            inputs=[materials_input, topic_dropdown],
+            inputs=[materials_input, topic_dropdown, user_prompt1],
             outputs=[design_output],
         )
         clear_btn.click(
-            fn=lambda: (None, "", "自動判斷",
+            fn=lambda: (None, "", "自動判斷", "",
                         "*送出資料後，Agent 將規劃章節並逐一生成，結果即時顯示於此……*",
                         gr.update(visible=False), gr.update(visible=False)),
-            outputs=[file_upload, materials_input, topic_dropdown,
+            outputs=[file_upload, materials_input, topic_dropdown, user_prompt1,
                      design_output, download_file, download_word_file],
         )
         download_btn.click(
@@ -855,6 +864,11 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
                     ),
                     lines=12,
                 )
+                user_prompt2 = gr.Textbox(
+                    label="使用者提示（選填）",
+                    placeholder="可輸入額外指示，例如：強調PoC試點方案、聚焦品保主管受眾、縮短執行摘要……",
+                    lines=3,
+                )
                 propose_btn = gr.Button("開始生成提案", variant="primary", size="lg")
                 propose_clear_btn = gr.Button("清除", size="lg")
             with gr.Column(scale=2):
@@ -904,14 +918,14 @@ with gr.Blocks(title="AI課程教材設計 & 客戶提案總監") as demo:
         )
         propose_btn.click(
             fn=run_proposal_design,
-            inputs=[proposal_input],
+            inputs=[proposal_input, user_prompt2],
             outputs=[proposal_output],
         )
         propose_clear_btn.click(
-            fn=lambda: (None, "",
+            fn=lambda: (None, "", "",
                         "*送出資料後，Agent 將規劃提案章節並逐一生成，結果即時顯示於此……*",
                         gr.update(visible=False), gr.update(visible=False)),
-            outputs=[file_upload2, proposal_input, proposal_output,
+            outputs=[file_upload2, proposal_input, user_prompt2, proposal_output,
                      proposal_download_html, proposal_download_word],
         )
         proposal_html_btn.click(
