@@ -1342,14 +1342,6 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                 label="Word 檔案", visible=False, interactive=False
             )
 
-        gr.Examples(
-            examples=[
-                ["", "品牌名稱：無印良品風格小物\n商品名稱：陶瓷香薰石\n售價區間：NT$380-480\n目標客群：25-35歲都市女性\n銷售平台：Pinkoi、Instagram"],
-                ["", "商品名稱：手工皮革名片夾\n商品材質：頭層牛皮\n售價區間：NT$1200-1800\n目標客群：商務男性、畢業送禮\n主打賣點：手縫工藝、可刻字客製"],
-            ],
-            inputs=[img_upload3, extra_info3],
-        )
-
         commerce_btn.click(
             fn=run_commerce_analysis,
             inputs=[img_upload3, extra_info3, user_prompt3],
