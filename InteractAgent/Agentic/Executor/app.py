@@ -10,6 +10,7 @@ import markdown as md
 from openai import OpenAI
 from langchain_openai import ChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from langgraph.graph import END, StateGraph
 
@@ -701,6 +702,344 @@ def run_proposal_design(materials: str, user_prompt: str = ""):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Image to Commerce Decision Growth Agent (Plan-Execute架構)
+# ══════════════════════════════════════════════════════════════════════════════
+
+COMMERCE_AGENT_SYSTEM = """
+你是一位品牌策略、商品定位、電商轉換、社群內容企劃、競品分析與高擴散內容設計專家，名稱為「Image to Commerce Decision Growth Agent」。
+你擅長根據商品圖片，判斷商品類型、設計語言、情緒價值、使用情境、潛在客群、購買猶豫點、競品差異與市場切入位置。
+你的工作是把商品圖片轉成一套可用於社群、電商頁、短影音與品牌企劃的內容策略。
+每一次輸出都要讓品牌更容易被看見、被記住、被比較後選中。
+
+## 核心原則
+好文案的核心，是幫消費者更快做出選擇。每一段內容都要回答三個問題：
+- 為什麼這個商品值得停下來看？
+- 為什麼它值得被擁有？
+- 為什麼它比其他類似選項更有記憶點？
+
+請把商品特徵轉成具體情境、情緒價值與購買理由。
+若文案偏向形容詞堆疊，請改成更具畫面感的生活場景。
+若文案偏向一般商品介紹，請補上差異化觀點與消費者選擇理由。
+若不同平台的內容太接近，請依平台任務重新調整語氣與結構。
+
+## 任務清單
+- 根據商品圖片判斷商品類型、設計風格、受眾與使用情境
+- 將外觀特徵轉成情緒價值、購買理由、送禮理由與收藏理由
+- 找出商品相對於替代品的差異化位置
+- 預判消費者購買前的猶豫，並用文案自然處理
+- 產出高吸引力標題、社群文案、商品頁文案與短影音腳本
+- 設計具備停留、收藏、留言、分享潛力的高擴散內容
+- 在沒有外部搜尋能力時，根據使用者提供的資料或圖片做保守判斷
+- 維持品牌質感，讓內容有銷售力，也保有自然與可信度
+- 在資訊不足時，清楚標示可見事實、合理推測與需要補充的資訊
+
+## 圖片資訊分類原則
+先整理圖片能支持的資訊，分成三類：
+- **可見事實**：商品外觀、造型、色彩、比例、表面質感、包裝、情境元素、圖片中明確可見的文字或符號
+- **合理推測**：可合理推測的商品風格、使用情境、情緒價值、目標客群、送禮或收藏可能性（請標示「從圖片推測」）
+- **需要補充確認**：材質、尺寸、產地、耐用度、安全認證、品牌故事、銷售成績、使用者評價、實際功效
+
+## 視覺分析原則
+根據圖片進行視覺判讀，把外觀轉成消費者能感受到的語言。
+重點放在商品如何進入生活，而非單純描述它長什麼樣子。
+每一個視覺判斷都要連回消費者感受，推測內容請自然標示「從圖片推測」。
+資訊不足處請留給使用者補充，以具體情境取代籠統形容。
+
+## 消費者需求判斷
+- 消費者為什麼會被這類商品吸引？
+- 它滿足的是實用需求、情緒需求、送禮需求、收藏需求，還是空間風格需求？
+- 消費者可能會拿它和哪些商品比較？
+- 這個商品最適合佔據哪一個心智位置？
+- 消費者滑到這張商品圖時，哪個理由會讓他停下來？
+
+## 競品比較原則
+目前無外部搜尋能力，請標示「未進行外部查找」。
+可根據商品類型推測常見替代品，並標示為推測。
+若要做精準比較，請提醒使用者提供競品連結、截圖或品牌名稱。
+比較重點放在消費者選擇理由，以客觀比較取代攻擊語氣。
+
+## 高擴散內容原則
+高擴散內容要讓人有理由收藏、分享、標記朋友、留言或轉發，同時保有品牌質感。
+以具體情境取代空泛情緒，以身份認同、生活場景、送禮時刻或實用收藏帶動擴散。
+
+擴散觸發點類型：
+- **身份認同觸發**：讓消費者覺得這很像自己、朋友、伴侶或某種生活狀態
+- **情緒觸發**：放大療癒、陪伴、驚喜、可愛、幽默、儀式感、懷舊感或安全感
+- **社交觸發**：讓人想標記朋友、分享給特定對象或引發互動
+- **好奇觸發**：用反差、細節、造型、使用情境或意外感讓人停下來看
+- **實用觸發**：讓內容具有收藏價值，例如送禮清單、佈置靈感、挑選指南
+
+## 各平台文案任務
+- **Instagram**：停留、收藏、分享；有情緒、有生活感；短句有節奏；含 hook、情境描寫、CTA、5-8個 hashtag
+- **Threads**：引發共鳴與討論；像朋友聊天，真實有觀點；含 hook、延伸感受、可互動的問題或觀點
+- **Facebook**：建立信任與互動；敘事完整帶溫度；含 hook、情境故事、商品價值、問句互動、CTA
+- **小紅書**：分享推薦、收藏、搜尋；真實分享有體驗感；含吸睛標題、心得式描述、推薦理由、收藏導向語句
+- **Pinkoi 商品頁**：設計價值與送禮理由；設計品牌感細膩；含商品亮點、使用情境、設計理念、送禮說明
+- **電商商品頁**：降低購買決策成本；明確好懂購買導向；含賣點、情境、購買理由、行動引導
+- **短影音腳本**：前三秒留住注意力；快節奏立刻抓住；含三秒開場畫面+台詞、商品亮點帶出、使用情境、CTA
+
+## 語言風格規則
+- 把「必買」改成具體擁有理由
+- 把「很夯」改成可觀察的生活情境
+- 把「超值」改成具體使用或送禮價值
+- 把「很可愛」改成具體表情、細節或陪伴感
+- 把「很有質感」改成材質感、色彩、線條或空間氛圍
+- 文字自然、有生活感、有品牌感，也有銷售力
+- 有行動引導，但不急迫
+
+## 標題設計原則
+產出十個高吸引力標題，涵蓋：好奇型、情境型、情緒型、問題型、利益型、送禮型、收藏型、設計感型、反差型、社交互動型。
+標題要有生活感與記憶點，寫出想擁有的理由，貼合商品，不只追求聲量。
+最後選出最推薦的標題並說明選擇理由與最適合的平台。
+
+## 輸出品質標準
+- 消費者能在三秒內知道商品值得看
+- 消費者能理解商品和其他選項不同在哪裡
+- 文案能把商品外觀轉成情緒、場景與購買理由
+- 平台文案有明顯任務差異
+- 高擴散內容有明確分享、收藏或互動理由
+- 競品比較能反推我方切入位置
+- 最終內容可直接交給品牌、社群或電商團隊使用
+"""
+
+COMMERCE_SECTIONS = [
+    "商品圖片洞察",
+    "消費者會想買的理由",
+    "差異化定位",
+    "競品與替代品比較",
+    "高擴散內容角度",
+    "十個標題候選與最佳推薦",
+    "各平台文案",
+    "關鍵字與 hashtag",
+    "品質檢查與可補充資訊",
+]
+
+COMMERCE_SECTION_FORMATS = {
+    "商品圖片洞察": """\
+請分三部分輸出：
+**1. 可見事實**：列出圖片中明確可見的商品外觀、造型、色彩、比例、表面質感、包裝與情境元素。
+**2. 合理推測**：列出可合理推測的商品風格、使用情境、情緒價值、目標客群、送禮或收藏可能性（請標示「從圖片推測」）。
+**3. 需要補充確認**：列出材質、尺寸、產地等需要使用者提供才能確認的資訊。""",
+
+    "消費者會想買的理由": """\
+請輸出：
+- **情緒價值**：這個商品帶給消費者的情感滿足
+- **使用情境**：最能觸發購買的具體生活場景（2-3個）
+- **送禮或收藏理由**：為什麼有人會把它當禮物或收藏品
+- **最強購買觸發點**：一句話說出讓人下單的核心理由
+- **購買猶豫與處理**：預判主要猶豫點（2-3個）與對應的文案策略""",
+
+    "差異化定位": """\
+請輸出：
+- **一句話市場定位**（說清楚這個商品在市場上的位置）
+- **核心賣點**（1-2個，要比「好看」更具體）
+- **和一般同類商品最大的不同之處**
+- **文案應該放大的主軸**
+- **文案應該避開的普通化角度**""",
+
+    "競品與替代品比較": """\
+請標示「本次未進行外部搜尋」，並：
+- 推測消費者可能拿這個商品比較的替代品類型（標示為推測）
+- 分析競品常見說法與我方可切入的差異化位置
+- 說明消費者為什麼會選這個商品而非替代品
+- 列出若要做精準競品比較，需要補充的資料""",
+
+    "高擴散內容角度": """\
+請提供五個高擴散內容角度，每個角度包含：觸發類型、最適合平台、Hook（開場句）、內容主軸、互動設計、CTA。
+
+接著提供：
+- 三則可直接使用的高擴散短文案（50-80字，每則適合不同觸發類型）
+- 三個短影音開場腳本（含前三秒畫面描述與台詞）""",
+
+    "十個標題候選與最佳推薦": """\
+請提供十個不同角度的高吸引力標題（依序）：
+1. 好奇型　2. 情境型　3. 情緒型　4. 問題型　5. 利益型
+6. 送禮型　7. 收藏型　8. 設計感型　9. 反差型　10. 社交互動型
+
+最後選出最推薦的標題，並說明：為什麼最有機會讓人停下來、最適合用在哪個平台或情境。""",
+
+    "各平台文案": """\
+請依序產出各平台文案：
+
+**Instagram**（含：吸睛 hook、一段情境描寫、自然 CTA、5-8個 hashtag）
+
+**Threads**（含：hook、一句延伸感受、可引發互動的問題或觀點）
+
+**Facebook**（含：hook、情境故事、商品價值、問句互動、CTA）
+
+**小紅書**（含：吸睛標題、使用心得式描述、推薦理由、收藏導向語句）
+
+**Pinkoi 商品頁**（含：商品亮點、使用情境、設計理念、送禮說明）
+
+**電商商品頁**（含：商品賣點、使用情境、購買理由、行動引導）
+
+**短影音腳本**（含：三秒吸睛開場畫面+台詞、商品亮點帶出、使用情境展示、收尾 CTA）""",
+
+    "關鍵字與 hashtag": """\
+請提供：
+- **社群 hashtag**（中英文混合，15-20個，分通用型與精準型）
+- **搜尋關鍵字**（消費者實際會搜尋的語句，含描述詞、用途詞、送禮詞、風格詞）
+- **電商導購關鍵字**（適合商品標題或描述的長尾關鍵字）
+- **送禮情境關鍵字**
+- **風格關鍵字**""",
+
+    "品質檢查與可補充資訊": """\
+請進行最終品質確認，以清單格式輸出各項是否達標：
+- 是否有明確購買理由
+- 是否有清楚差異化定位
+- 是否有處理消費者猶豫
+- 是否有平台文案差異
+- 是否避開普通文案
+- 是否具備高擴散誘因
+- 是否有標示圖片無法確認的內容
+- 是否把商品特徵轉成情緒與場景
+
+最後列出：**最需要補充的商品資訊**（按優先順序排列）""",
+}
+
+
+class CommerceState(TypedDict):
+    images: List[dict]
+    extra_info: str
+    plan: List[str]
+    past_steps: Annotated[List[Tuple[str, str]], operator.add]
+    response: str
+
+
+class CommercePlan(BaseModel):
+    """商品電商成長分析章節計畫"""
+    steps: List[str] = Field(description="依序需要產出的分析章節名稱列表")
+
+
+def _build_image_content(images: List[dict], text: str) -> list:
+    content = [{"type": "text", "text": text}]
+    for img in images:
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": f"data:{img['mime']};base64,{img['b64']}"},
+        })
+    return content
+
+
+def commerce_planner(state: CommerceState):
+    text = (
+        "請分析這些商品圖片，決定最適合產出的分析章節順序。\n"
+        "可選章節：" + "／".join(COMMERCE_SECTIONS) + "\n"
+        "請列出所有章節，依最佳分析邏輯排序。"
+        + (f"\n\n補充商品資訊：\n{state['extra_info']}" if state.get("extra_info") else "")
+    )
+    messages = [
+        SystemMessage(content=COMMERCE_AGENT_SYSTEM),
+        HumanMessage(content=_build_image_content(state.get("images", []), text)),
+    ]
+    result = llm_4o.with_structured_output(CommercePlan).invoke(messages)
+    return {"plan": result.steps}
+
+
+def commerce_executor(state: CommerceState):
+    section = state["plan"][0]
+    completed = "\n\n".join(
+        f"### {s}\n{r}" for s, r in state["past_steps"]
+    ) if state["past_steps"] else "（尚無已完成章節）"
+    section_key = next((k for k in COMMERCE_SECTION_FORMATS if k in section), None)
+    format_hint = f"\n\n**格式要求：**\n{COMMERCE_SECTION_FORMATS[section_key]}" if section_key else ""
+    text = (
+        (f"補充商品資訊：\n{state['extra_info']}\n\n" if state.get("extra_info") else "")
+        + f"已完成章節（供參考，保持一致性）：\n{completed}\n\n"
+        + f"請現在產出「{section}」的完整內容。內容要具體、可直接使用。{format_hint}"
+    )
+    messages = [
+        SystemMessage(content=COMMERCE_AGENT_SYSTEM),
+        HumanMessage(content=_build_image_content(state.get("images", []), text)),
+    ]
+    result = llm_4o.invoke(messages)
+    return {"past_steps": [(section, result.content)]}
+
+
+def commerce_replanner(state: CommerceState):
+    remaining = state["plan"][1:]
+    if not remaining:
+        full_output = "\n\n---\n\n".join(
+            f"## {section}\n\n{content}"
+            for section, content in state["past_steps"]
+        )
+        return {"response": full_output}
+    return {"plan": remaining}
+
+
+def commerce_should_end(state: CommerceState):
+    return "end" if state.get("response") else "continue"
+
+
+def build_commerce_graph():
+    wf = StateGraph(CommerceState)
+    wf.add_node("planner", commerce_planner)
+    wf.add_node("executor", commerce_executor)
+    wf.add_node("re_planner", commerce_replanner)
+    wf.set_entry_point("planner")
+    wf.add_edge("planner", "executor")
+    wf.add_edge("executor", "re_planner")
+    wf.add_conditional_edges("re_planner", commerce_should_end, {"continue": "executor", "end": END})
+    return wf.compile()
+
+
+commerce_graph = build_commerce_graph()
+
+VISION_EXTS = IMAGE_EXTS - {".svg"}
+
+
+def _images_from_files(file_list) -> List[dict]:
+    if not file_list:
+        return []
+    if not isinstance(file_list, list):
+        file_list = [file_list]
+    images = []
+    for f in file_list:
+        path = f.name if hasattr(f, "name") else str(f)
+        ext = os.path.splitext(path)[1].lower()
+        if ext not in VISION_EXTS:
+            continue
+        ext_key = ext.lstrip(".")
+        mime = f"image/{MIME_MAP.get(ext_key, 'png')}"
+        with open(path, "rb") as fh:
+            b64 = base64.b64encode(fh.read()).decode()
+        images.append({"mime": mime, "b64": b64})
+    return images
+
+
+def run_commerce_analysis(file_list, extra_info: str, user_prompt: str = ""):
+    images = _images_from_files(file_list)
+    if not images:
+        yield "⚠️ 請上傳至少一張商品圖片後再送出。"
+        return
+
+    info = extra_info.strip() if extra_info else ""
+    if user_prompt and user_prompt.strip():
+        info = (info + "\n\n" if info else "") + f"使用者額外指示：\n{user_prompt.strip()}"
+
+    output = ""
+    plan_shown = False
+
+    for event in commerce_graph.stream(
+        {"images": images, "extra_info": info}, {"recursion_limit": 30}
+    ):
+        for node_name, value in event.items():
+            if node_name == "planner" and "plan" in value and not plan_shown:
+                plan_shown = True
+                output = "### 📋 分析章節規劃\n" + "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(value["plan"])
+                ) + "\n\n---\n\n*逐章節生成中……*\n\n"
+                yield output
+            elif node_name == "executor" and "past_steps" in value:
+                for section, content in value["past_steps"]:
+                    output = output.replace("*逐章節生成中……*\n\n", "")
+                    output += f"## {section}\n\n{content}\n\n---\n\n*逐章節生成中……*\n\n"
+                    yield output
+            elif node_name == "re_planner" and value.get("response"):
+                yield value["response"]
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -938,6 +1277,100 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
             inputs=[proposal_output],
             outputs=[proposal_download_word, proposal_download_word],
+        )
+
+    # ── Tab 3 ──────────────────────────────────────────────────────────────────
+    with gr.Tab("🛍️ 商品圖片電商成長Agent"):
+        gr.Markdown(
+            "# Image to Commerce Decision Growth Agent\n"
+            "上傳商品圖片，以 **Plan-Execute** 架構自動生成品牌策略、電商文案、"
+            "社群內容、競品分析與高擴散內容設計。"
+        )
+
+        with gr.Row():
+            img_upload3 = gr.File(
+                label="📷 上傳商品圖片（必填，可選取多張）",
+                file_types=[".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff"],
+                file_count="multiple",
+            )
+
+        with gr.Accordion("📝 補充商品資訊（選填）", open=False):
+            gr.Markdown(
+                "可提供：品牌名稱、商品名稱、商品材質、商品尺寸、售價區間、"
+                "目標客群、想主打的賣點、銷售平台、品牌語氣、希望避開的詞語、"
+                "競品或參考品牌、促銷活動資訊等。"
+            )
+            extra_info3 = gr.Textbox(
+                label="商品補充資訊",
+                placeholder=(
+                    "品牌名稱：\n"
+                    "商品名稱：\n"
+                    "商品材質：\n"
+                    "售價區間：\n"
+                    "目標客群：\n"
+                    "主打賣點：\n"
+                    "銷售平台：\n"
+                    "品牌語氣：\n"
+                    "其他備注："
+                ),
+                lines=10,
+            )
+
+        user_prompt3 = gr.Textbox(
+            label="使用者提示（選填）",
+            placeholder="可輸入額外指示，例如：只產出 Instagram 和小紅書文案、強調送禮情境、精簡版輸出……",
+            lines=3,
+        )
+
+        with gr.Row():
+            commerce_btn = gr.Button("開始分析商品圖片", variant="primary", size="lg")
+            commerce_clear_btn = gr.Button("清除", size="lg")
+
+        commerce_output = gr.Markdown(
+            label="商品電商成長分析結果",
+            value="*上傳商品圖片後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+        )
+
+        with gr.Row():
+            commerce_html_btn = gr.Button("📥 下載 HTML", size="lg")
+            commerce_word_btn = gr.Button("📄 下載 Word", size="lg")
+        with gr.Row():
+            commerce_download_html = gr.File(
+                label="HTML 檔案", visible=False, interactive=False
+            )
+            commerce_download_word = gr.File(
+                label="Word 檔案", visible=False, interactive=False
+            )
+
+        gr.Examples(
+            examples=[
+                ["", "品牌名稱：無印良品風格小物\n商品名稱：陶瓷香薰石\n售價區間：NT$380-480\n目標客群：25-35歲都市女性\n銷售平台：Pinkoi、Instagram"],
+                ["", "商品名稱：手工皮革名片夾\n商品材質：頭層牛皮\n售價區間：NT$1200-1800\n目標客群：商務男性、畢業送禮\n主打賣點：手縫工藝、可刻字客製"],
+            ],
+            inputs=[img_upload3, extra_info3],
+        )
+
+        commerce_btn.click(
+            fn=run_commerce_analysis,
+            inputs=[img_upload3, extra_info3, user_prompt3],
+            outputs=[commerce_output],
+        )
+        commerce_clear_btn.click(
+            fn=lambda: (None, "", "",
+                        "*上傳商品圖片後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+                        gr.update(visible=False), gr.update(visible=False)),
+            outputs=[img_upload3, extra_info3, user_prompt3, commerce_output,
+                     commerce_download_html, commerce_download_word],
+        )
+        commerce_html_btn.click(
+            fn=lambda content: (generate_html_file(content), gr.update(visible=True)),
+            inputs=[commerce_output],
+            outputs=[commerce_download_html, commerce_download_html],
+        )
+        commerce_word_btn.click(
+            fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
+            inputs=[commerce_output],
+            outputs=[commerce_download_word, commerce_download_word],
         )
 
 if __name__ == "__main__":
