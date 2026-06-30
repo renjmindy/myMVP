@@ -1040,7 +1040,7 @@ def run_commerce_analysis(file_list, extra_info: str, user_prompt: str = ""):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# TAB 4 — 業務智能分析大師 Agent (Plan-Execute架構)
+# TAB 4 — 業務智能分析Agent Agent (Plan-Execute架構)
 # ══════════════════════════════════════════════════════════════════════════════
 
 SALES_AGENT_SYSTEM = """
@@ -1661,9 +1661,9 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         )
 
     # ── Tab 4 ──────────────────────────────────────────────────────────────────
-    with gr.Tab("📊 業務智能分析大師"):
+    with gr.Tab("📊 業務智能分析Agent"):
         gr.Markdown(
-            "# 業務智能分析大師 Agent\n"
+            "# 業務智能分析Agent Agent\n"
             "上傳客戶資料、報表、會議紀錄或任何附件，以 **Plan-Execute** 架構進行深度質性與量化分析，"
             "並可生成精緻商業風格的**互動式 HTML 儀表板**（含客戶輪廓、痛點偵測、策略模擬），協助精準提案。"
         )
