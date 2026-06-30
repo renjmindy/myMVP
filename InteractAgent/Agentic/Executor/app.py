@@ -1088,12 +1088,17 @@ SALES_SECTION_FORMATS = {
         "用3-5句話說明資料類型、資料品質、最重要的3個發現，以及本次分析的業務價值。"
     ),
     "客戶輪廓與行為分析": """\
-請輸出：
-- **客戶基本資訊**（姓名/公司、產業、規模、職位/決策層級；若無則從資料推測）
-- **行為特徵**（決策風格、溝通偏好、資訊吸收方式）
-- **購買動機**（表面需求 vs 深層需求）
-- **決策影響因子**（影響購買決策的關鍵因素，按重要性排序）
-- **人物誌描述**（100字以內，生動描述這個客戶是什麼樣的人）""",
+請識別並輸出所有關鍵利害關係人（若有多人請分別列出），每位格式如下：
+
+**[姓名或代稱] / [職稱]**
+- 角色類型：Champion（內部倡導者）/ Blocker（阻礙者）/ Gatekeeper（把關者）/ Influencer（影響者）/ Decision Maker（決策者）
+- 屬性痛點：[顯性需求或問題，1-2句]
+- 屬性需求：[功能性或流程性需求，1-2句]
+- 隱性恐懼 (Deep Fear)：[說出或未說出的深層恐懼，最關鍵的心理障礙，1句核心描述]
+- 決策邏輯：[如何做決定，1句]
+- 最佳應對策略：[業務員如何針對此人的心理調整策略，1-2句]
+
+最後列出：影響成交最關鍵的利害關係人與理由。""",
     "痛點偵測與影響量化": """\
 請用表格輸出痛點清單：
 | 痛點 | 類型（顯性/隱性） | 嚴重程度（1-10） | 業務影響 | 處理策略 |
@@ -1144,42 +1149,129 @@ SALES_SECTION_FORMATS = {
 }
 
 DASHBOARD_HTML_SYSTEM = (
-    "你是一位專業的前端開發者與商業視覺設計師。"
+    "你是一位專業的前端開發者與商業視覺設計師，擅長深色商業儀表板設計。"
     "只輸出完整的 HTML 原始碼，不要任何說明或 markdown 包裝。"
 )
 
 DASHBOARD_HTML_PROMPT = """\
-根據以下業務分析報告，產出一份完整、可直接在瀏覽器開啟的互動式 HTML 儀表板。
+根據以下業務分析報告，產出一份「B2B 戰略情報室」風格的完整互動 HTML 儀表板。
 
-## 設計規格
-配色：背景 #0a1628（深海藍），卡片 #1a2942，強調色 #c9a860（金），文字白色
-字型：Google Fonts Noto Sans TC（CDN 載入）
-圖表：Chart.js from https://cdn.jsdelivr.net/npm/chart.js
+## 配色系統（定義為 CSS :root 變數）
+--bg-primary: #0d1117
+--bg-card: #161b22
+--bg-card-2: #1a2035
+--accent-gold: #f0b429
+--accent-cyan: #21d4fd
+--accent-red: #ff6b6b
+--accent-purple: #8b5cf6
+--accent-blue: #3b82f6
+--accent-orange: #f97316
+--text-primary: #e6edf3
+--text-secondary: #8b949e
+--border: rgba(33,212,253,0.15)
 
-## 必要區塊（依序）
+字型：Google Fonts Noto Sans TC + Inter（CDN 載入）
+圖表：Chart.js https://cdn.jsdelivr.net/npm/chart.js
 
-1. **Hero**：漸層背景（#0a1628→#1a0a3e），大標題「業務智能分析儀表板」，副標（從報告提取客戶/案例名稱），右側顯示日期
+---
 
-2. **KPI 卡片**（4-6張橫排）：從報告提取關鍵數字，每張含 emoji 圖標+數字+說明+趨勢箭頭，卡片頂部有金色線條
+## 區塊 1：頂部導覽列（sticky，高約 70px）
+左側（兩行）：
+  第一行：[≈] 圖標（青藍色）+ 粗體大標「B2B 戰略情報室」+ 細垂直分隔線 + 專案副標（從報告提取案例/專案名稱）
+  第二行：小字灰色「基於 [資料來源或檔案名稱] 之大數據與心理學深度解析」
+右側：兩個指標（金色標籤文字，上方灰色英文小標）：
+  TARGET CLIENT → 客戶公司名稱
+  EST. VALUE → High（戰略級客戶）/ Medium（一般客戶）/ Low（觀察中）
 
-3. **客戶輪廓**（左：CSS漸層圓形頭像+姓名+職稱+公司；右：生動描述段落+特質標籤群）
+---
 
-4. **痛點偵測**（左：顏色清單，嚴重程度用紅→橙→黃漸層；右：Chart.js Radar Chart）
+## 區塊 2：三欄主體（CSS Grid，欄比 1 : 1.3 : 1，間距 16px，padding 20px）
 
-5. **量化分析**（3個 Chart.js 圖表橫排：Bar + Line + Doughnut，從報告提取或合理推估數據）
+### 左欄：利害關係人矩陣
+標題「利害關係人矩陣」（白色粗體，底部金色2px線）
 
-6. **質性洞察**（3欄卡片網格，每張：emoji+標題+說明，金色左邊框）
+從分析中識別每位關鍵人物，各產出一張卡片（#161b22背景，圓角12px，padding 16px，下邊距12px）：
+  ① 第一行：CSS漸層圓形頭像（直徑44px）+ 姓名（粗體白色）+ 斜線 + 職稱（灰色）
+  ② 角色徽章（行內標籤，圓角20px，小字，padding 3px 10px）：
+     Champion / 內部倡導者 → 背景 #ff6b6b，白色文字
+     Blocker / Gatekeeper / 風險控制者 → 背景 #8b5cf6，白色文字
+     Influencer / 影響者 → 背景 #3b82f6，白色文字
+     Decision Maker / 決策者 → 背景 #f0b429，黑色文字
+  ③ 屬性痛點（或屬性需求）：灰色小標「⊕ 屬性痛點」+ 白色正文（font-size 13px）
+  ④ 隱性恐懼區塊（背景 rgba(249,115,22,0.08)，左邊框3px橘色，padding 8px 12px，圓角4px）：
+     橘色 🔮 + 粗體「隱性恐懼 (Deep Fear)」+ 橘色斜體說明文字
 
-7. **隱藏洞察特區**（金色漸層外框+深色特殊背景，標題「⚡ 潛在機會：容易被忽略的關鍵信號」，3-5個洞察條目）
+### 中欄：專案需求維度解析
+標題「專案需求維度解析」（白色粗體）
 
-8. **策略比較**（3個 Tab 按鈕切換；每個策略顯示名稱+風險+成功機率+4步驟+效益；底部 Chart.js 水平 Bar Chart 比較3策略綜合得分）
+Chart.js Radar Chart（canvas，height 300px）：
+  - 背景透明，gridLines 顏色 rgba(255,255,255,0.1)
+  - 維度（5-7個）：從分析痛點與需求維度中提取，如辨識準確率、系統整合度、操作簡化、導入風險、報表價值……
+  - Dataset 1（青藍 #21d4fd，fill rgba(33,212,253,0.15)）：「客戶期望值（痛點強烈度）」— 根據痛點嚴重程度給分
+  - Dataset 2（紅色 #ff6b6b，fill rgba(255,107,107,0.1)）：「傳統方案覆蓋度」— 數值普遍偏低顯示市場空白
 
-9. **行動計畫時間軸**（橫向4節點：Week 1 → Week 2-4 → Month 2 → Month 3+，每節點有任務與里程碑，金色圓點連線）
+圖表正下方兩個並排指標卡（#1a2035，圓角8px）：
+  左：「關鍵決定因素」（白色粗體）：填入分析中最關鍵決策因素
+  右：「最高風險點」（紅色粗體）：填入分析中最高風險項目
 
-## JavaScript
-- 策略 Tab 切換（active class 顯示/隱藏）
-- KPI 數字從0計數到目標值動畫（DOMContentLoaded 觸發）
-- Chart.js 初始化所有圖表
+### 右欄：提案策略模擬器
+第一行：粗體白色「🏆 提案策略模擬器」+ 右側小按鈕「互動測試」（金色邊框，黑色背景）
+副標（灰色小字 13px）：勾選您預計在提案書中主打的策略，預測「贏單機率」與「客戶決策阻力」。
+
+策略列表（從分析的策略模擬章節提取4-5個策略，每個一行）：
+  格式：[checkbox.strategy-check，data-boost="N"，data-note="說明"] + 策略類型標籤（「主打」金色/「加值」藍色/「商務」灰色）+ 策略名稱（粗體白色）+ 策略說明（灰色小字）
+  第一個策略預設 checked
+  boost 值從分析中依策略重要性設定（如 +20, +15, +12, +10），總和不超過55
+
+底部預測卡（#0d1117背景，圓角10px，padding 16px，上邊距16px）：
+  第一行：「預測贏單機率 (Win Probability)」灰色小字 + 右側大金色粗體「<span id="win-prob">XX%</span>」（font-size 2rem）
+  第二行：漸層進度條（height 8px，圓角，背景 linear-gradient(90deg,#ff6b6b,#f97316,#f0b429,#22c55e)，外層灰色軌道）
+    → <div id="win-bar" style="height:8px;border-radius:4px;background:linear-gradient(...);width:XX%;transition:width 0.4s">
+  第三行：灰色小字 <span id="win-note">已強化優勢：……</span>
+
+---
+
+## 區塊 3：下方兩欄（各50%，間距16px）
+
+左欄：隱藏洞察卡（border: 1px solid #f0b429，背景 rgba(240,180,41,0.05)，圓角12px，padding 20px）
+標題「⚡ 潛在機會：容易被忽略的關鍵信號」（金色粗體）
+3-4個條目：左側青藍色圓點 + 白色粗體標題 + 灰色說明（兩行內）
+
+右欄：精準行動計畫（#161b22，圓角12px，padding 20px）
+標題「精準行動計畫」（白色粗體）
+橫向時間軸（或縱向）：Week 1 → Week 2-4 → Month 2 → Month 3+
+每節點：金色圓點（8px）→ 連接橫線 → 節點卡（任務2-3條 + 里程碑說明）
+
+---
+
+## JavaScript（嵌入 <script> 標籤）
+
+```javascript
+// 策略模擬器
+function updateWinProb() {
+  const base = 35;
+  let total = base, notes = [];
+  document.querySelectorAll('.strategy-check:checked').forEach(cb => {
+    total += parseInt(cb.dataset.boost || 0);
+    if (cb.dataset.note) notes.push(cb.dataset.note);
+  });
+  total = Math.min(total, 92);
+  document.getElementById('win-prob').textContent = total + '%';
+  document.getElementById('win-bar').style.width = total + '%';
+  document.getElementById('win-note').textContent = notes.length
+    ? '已強化優勢：' + notes.join('、') + '。'
+    : '請勾選策略以強化提案。';
+}
+document.querySelectorAll('.strategy-check').forEach(cb =>
+  cb.addEventListener('change', updateWinProb));
+// 初始化
+updateWinProb();
+
+// Chart.js Radar 初始化（參見上方 canvas 元素）
+// KPI 數字計數動畫（若有 KPI 區塊）
+```
+
+---
 
 只輸出完整 HTML 原始碼（含所有 CSS 和 JS），不要任何說明或 ```html 包裝。
 
