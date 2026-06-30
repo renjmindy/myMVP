@@ -1040,6 +1040,301 @@ def run_commerce_analysis(file_list, extra_info: str, user_prompt: str = ""):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 4 — 業務智能分析大師 Agent (Plan-Execute架構)
+# ══════════════════════════════════════════════════════════════════════════════
+
+SALES_AGENT_SYSTEM = """
+你是一位擁有50年經驗的大數據分析大師、金牌業務以及產業顧問，對各行業都非常熟悉。
+使用者是一位業務員，希望你協助他進行精準提案。
+
+你的核心能力：
+- 對資料進行深度分析，涵蓋質性與量化兩個維度
+- 能看出潛在、容易被忽略的特性與隱藏信號
+- 快速識別客戶輪廓、痛點、決策邏輯與購買動機
+- 模擬不同業務策略的效果並給出具體建議
+- 把數據轉成業務員可以直接使用的洞察與行動
+
+你的分析原則：
+- 每個分析都要連回業務行動，不只是觀察
+- 數字要有意義，要說明背後的業務啟示
+- 洞察要可操作，不只是描述現象
+- 建議要具體，不只是給方向
+- 客戶輪廓要生動，像是真實描述一個人
+- 痛點要有優先級排序與解決建議
+- 策略模擬要有具體執行步驟與成功機率估算
+
+資訊不足時的處理：
+- 先分析現有資料，盡力提供有用洞察
+- 標示「資訊不足」的地方
+- 列出建議補充的問題與資料
+
+輸出語言：繁體中文，語氣專業但清晰，避免過度學術化。
+"""
+
+SALES_SECTIONS = [
+    "資料總覽與執行摘要",
+    "客戶輪廓與行為分析",
+    "痛點偵測與影響量化",
+    "深度量化分析",
+    "深度質性分析",
+    "潛在特性與隱藏洞察",
+    "競爭態勢與市場定位",
+    "策略模擬與情境分析",
+    "精準提案行動計畫",
+]
+
+SALES_SECTION_FORMATS = {
+    "資料總覽與執行摘要": (
+        "用3-5句話說明資料類型、資料品質、最重要的3個發現，以及本次分析的業務價值。"
+    ),
+    "客戶輪廓與行為分析": """\
+請輸出：
+- **客戶基本資訊**（姓名/公司、產業、規模、職位/決策層級；若無則從資料推測）
+- **行為特徵**（決策風格、溝通偏好、資訊吸收方式）
+- **購買動機**（表面需求 vs 深層需求）
+- **決策影響因子**（影響購買決策的關鍵因素，按重要性排序）
+- **人物誌描述**（100字以內，生動描述這個客戶是什麼樣的人）""",
+    "痛點偵測與影響量化": """\
+請用表格輸出痛點清單：
+| 痛點 | 類型（顯性/隱性） | 嚴重程度（1-10） | 業務影響 | 處理策略 |
+|---|---|---|---|---|
+最後說明：最高優先處理的痛點與理由。""",
+    "深度量化分析": """\
+提取所有可量化的指標，用表格整理：
+| 指標 | 數值 | 意義 | 業務行動 |
+|---|---|---|---|
+並說明數字背後最重要的3個業務洞察。""",
+    "深度質性分析": """\
+請分析：
+- **語氣與態度**（對方溝通語氣透露什麼訊號？）
+- **優先級排序**（對方最在意什麼？次要考量是什麼？）
+- **決策邏輯**（對方如何做決定？）
+- **未說出口的需求**（從資料推測的潛在期望）
+- **合作意願信號**（哪些跡象顯示合作意願高/低？）""",
+    "潛在特性與隱藏洞察": """\
+找出5-7個容易被忽略但對業務非常關鍵的特性，每個包含：
+- **信號名稱**
+- **觀察到的跡象**（具體指出資料中的哪個細節）
+- **為什麼重要**（對業務的影響）
+- **建議行動**（業務員應如何利用這個洞察）""",
+    "競爭態勢與市場定位": """\
+請分析：
+- 客戶目前的選擇與替代方案
+- 我方優勢與可能的弱點
+- 競爭者的可能策略
+- 我方最佳差異化切入點
+- 一句話說明我方應如何定位""",
+    "策略模擬與情境分析": """\
+請模擬三種業務策略（每個包含：策略描述、風險等級、成功機率估算、4個執行步驟、預期效益）：
+
+**策略A：快速成交型**
+
+**策略B：關係建立型**
+
+**策略C：顧問式提案型**
+
+最後給出：根據本次分析，最推薦哪種策略組合及理由。""",
+    "精準提案行動計畫": """\
+請輸出：
+**本週行動（Week 1）**（3個具體行動，含預期回應）
+**短期計畫（Week 2-4）**（推進步驟與里程碑）
+**中期計畫（Month 2-3）**（深化關係與方案）
+**關鍵成功因子**（本次提案最需要掌握的3個要素）
+**風險預警**（可能失敗的原因與預防策略）""",
+}
+
+DASHBOARD_HTML_SYSTEM = (
+    "你是一位專業的前端開發者與商業視覺設計師。"
+    "只輸出完整的 HTML 原始碼，不要任何說明或 markdown 包裝。"
+)
+
+DASHBOARD_HTML_PROMPT = """\
+根據以下業務分析報告，產出一份完整、可直接在瀏覽器開啟的互動式 HTML 儀表板。
+
+## 設計規格
+配色：背景 #0a1628（深海藍），卡片 #1a2942，強調色 #c9a860（金），文字白色
+字型：Google Fonts Noto Sans TC（CDN 載入）
+圖表：Chart.js from https://cdn.jsdelivr.net/npm/chart.js
+
+## 必要區塊（依序）
+
+1. **Hero**：漸層背景（#0a1628→#1a0a3e），大標題「業務智能分析儀表板」，副標（從報告提取客戶/案例名稱），右側顯示日期
+
+2. **KPI 卡片**（4-6張橫排）：從報告提取關鍵數字，每張含 emoji 圖標+數字+說明+趨勢箭頭，卡片頂部有金色線條
+
+3. **客戶輪廓**（左：CSS漸層圓形頭像+姓名+職稱+公司；右：生動描述段落+特質標籤群）
+
+4. **痛點偵測**（左：顏色清單，嚴重程度用紅→橙→黃漸層；右：Chart.js Radar Chart）
+
+5. **量化分析**（3個 Chart.js 圖表橫排：Bar + Line + Doughnut，從報告提取或合理推估數據）
+
+6. **質性洞察**（3欄卡片網格，每張：emoji+標題+說明，金色左邊框）
+
+7. **隱藏洞察特區**（金色漸層外框+深色特殊背景，標題「⚡ 潛在機會：容易被忽略的關鍵信號」，3-5個洞察條目）
+
+8. **策略比較**（3個 Tab 按鈕切換；每個策略顯示名稱+風險+成功機率+4步驟+效益；底部 Chart.js 水平 Bar Chart 比較3策略綜合得分）
+
+9. **行動計畫時間軸**（橫向4節點：Week 1 → Week 2-4 → Month 2 → Month 3+，每節點有任務與里程碑，金色圓點連線）
+
+## JavaScript
+- 策略 Tab 切換（active class 顯示/隱藏）
+- KPI 數字從0計數到目標值動畫（DOMContentLoaded 觸發）
+- Chart.js 初始化所有圖表
+
+只輸出完整 HTML 原始碼（含所有 CSS 和 JS），不要任何說明或 ```html 包裝。
+
+---
+分析報告：
+
+{analysis}
+"""
+
+
+class SalesState(TypedDict):
+    input: str
+    plan: List[str]
+    past_steps: Annotated[List[Tuple[str, str]], operator.add]
+    response: str
+
+
+class SalesPlan(BaseModel):
+    """業務分析章節計畫"""
+    steps: List[str] = Field(description="依序需要產出的分析章節名稱列表")
+
+
+def sales_planner(state: SalesState):
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SALES_AGENT_SYSTEM),
+        ("human",
+         "請分析以下資料，決定最適合的分析章節順序。\n"
+         "可選章節：" + "／".join(SALES_SECTIONS) + "\n"
+         "請列出所有章節，依最佳分析邏輯排序。\n\n"
+         "資料內容：\n{input}")
+    ])
+    planner = prompt | llm_4o.with_structured_output(SalesPlan)
+    result = planner.invoke({"input": state["input"]})
+    return {"plan": result.steps}
+
+
+def sales_executor(state: SalesState):
+    section = state["plan"][0]
+    completed = "\n\n".join(
+        f"### {s}\n{r}" for s, r in state["past_steps"]
+    ) if state["past_steps"] else "（尚無已完成章節）"
+    section_key = next((k for k in SALES_SECTION_FORMATS if k in section), None)
+    format_hint = f"\n\n**格式要求：**\n{SALES_SECTION_FORMATS[section_key]}" if section_key else ""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SALES_AGENT_SYSTEM),
+        ("human",
+         "原始資料：\n{input}\n\n"
+         "已完成章節（供參考，保持一致性）：\n{completed}\n\n"
+         "請現在產出「{section}」的完整內容。內容要具體、可操作、直接對業務員有用。{format_hint}")
+    ])
+    chain = prompt | llm_4o
+    result = chain.invoke({
+        "input": state["input"],
+        "completed": completed,
+        "section": section,
+        "format_hint": format_hint,
+    })
+    return {"past_steps": [(section, result.content)]}
+
+
+def sales_replanner(state: SalesState):
+    remaining = state["plan"][1:]
+    if not remaining:
+        full_output = "\n\n---\n\n".join(
+            f"## {section}\n\n{content}"
+            for section, content in state["past_steps"]
+        )
+        return {"response": full_output}
+    return {"plan": remaining}
+
+
+def sales_should_end(state: SalesState):
+    return "end" if state.get("response") else "continue"
+
+
+def build_sales_graph():
+    wf = StateGraph(SalesState)
+    wf.add_node("planner", sales_planner)
+    wf.add_node("executor", sales_executor)
+    wf.add_node("re_planner", sales_replanner)
+    wf.set_entry_point("planner")
+    wf.add_edge("planner", "executor")
+    wf.add_edge("executor", "re_planner")
+    wf.add_conditional_edges("re_planner", sales_should_end, {"continue": "executor", "end": END})
+    return wf.compile()
+
+
+sales_graph = build_sales_graph()
+
+
+def run_sales_analysis(file_list, user_context: str, user_prompt: str = ""):
+    parts = []
+    if file_list:
+        file_text = extract_files_text(file_list)
+        if file_text.strip():
+            parts.append(file_text)
+    if user_context and user_context.strip():
+        parts.append(f"補充背景資訊：\n{user_context.strip()}")
+    if user_prompt and user_prompt.strip():
+        parts.append(f"使用者額外指示：\n{user_prompt.strip()}")
+
+    text = "\n\n---\n\n".join(parts)
+    if not text.strip():
+        yield "⚠️ 請上傳附件或輸入資料後再送出。"
+        return
+
+    output = ""
+    plan_shown = False
+
+    for event in sales_graph.stream({"input": text}, {"recursion_limit": 40}):
+        for node_name, value in event.items():
+            if node_name == "planner" and "plan" in value and not plan_shown:
+                plan_shown = True
+                output = "### 📋 分析章節規劃\n" + "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(value["plan"])
+                ) + "\n\n---\n\n*逐章節分析中……*\n\n"
+                yield output
+            elif node_name == "executor" and "past_steps" in value:
+                for section, content in value["past_steps"]:
+                    output = output.replace("*逐章節分析中……*\n\n", "")
+                    output += f"## {section}\n\n{content}\n\n---\n\n*逐章節分析中……*\n\n"
+                    yield output
+            elif node_name == "re_planner" and value.get("response"):
+                yield value["response"]
+
+
+def generate_sales_dashboard_html(analysis_content: str):
+    import re as _re
+    if not analysis_content or "逐章節分析中" in analysis_content or analysis_content.startswith("*送出"):
+        return None
+
+    prompt = DASHBOARD_HTML_PROMPT.format(analysis=analysis_content[:12000])
+
+    response = openai_client.chat.completions.create(
+        model="gpt-4o",
+        messages=[
+            {"role": "system", "content": DASHBOARD_HTML_SYSTEM},
+            {"role": "user", "content": prompt},
+        ],
+        max_tokens=8000,
+        temperature=0.2,
+    )
+
+    html_content = response.choices[0].message.content.strip()
+    html_content = _re.sub(r"^```html\s*\n?", "", html_content, flags=_re.MULTILINE)
+    html_content = _re.sub(r"^```\s*$", "", html_content, flags=_re.MULTILINE)
+    html_content = html_content.strip()
+
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+    return tmp.name
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -1363,6 +1658,91 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
             inputs=[commerce_output],
             outputs=[commerce_download_word, commerce_download_word],
+        )
+
+    # ── Tab 4 ──────────────────────────────────────────────────────────────────
+    with gr.Tab("📊 業務智能分析大師"):
+        gr.Markdown(
+            "# 業務智能分析大師 Agent\n"
+            "上傳客戶資料、報表、會議紀錄或任何附件，以 **Plan-Execute** 架構進行深度質性與量化分析，"
+            "並可生成精緻商業風格的**互動式 HTML 儀表板**（含客戶輪廓、痛點偵測、策略模擬），協助精準提案。"
+        )
+
+        with gr.Accordion("📂 上傳附件（可選取多個檔案）", open=True):
+            gr.Markdown(
+                "支援格式：**PDF、Word (.docx)、PowerPoint (.pptx)、"
+                "Excel (.xlsx/.csv)、純文字 (.txt/.md/.json)、"
+                "圖表圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)**"
+            )
+            file_upload4 = gr.File(
+                label="拖曳或點擊上傳（可選取多個檔案）",
+                file_types=[
+                    ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv",
+                    ".txt", ".md", ".json",
+                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+                ],
+                file_count="multiple",
+            )
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                sales_context = gr.Textbox(
+                    label="補充背景資訊（選填）",
+                    placeholder=(
+                        "可輸入任何補充資訊，例如：\n"
+                        "・客戶名稱與產業\n"
+                        "・我方產品／服務說明\n"
+                        "・目前業務進度\n"
+                        "・競爭對手資訊\n"
+                        "・希望達成的目標"
+                    ),
+                    lines=8,
+                )
+                user_prompt4 = gr.Textbox(
+                    label="使用者提示（選填）",
+                    placeholder="可輸入額外指示，例如：聚焦製造業客戶、重點分析風險、精簡版輸出……",
+                    lines=3,
+                )
+                sales_btn = gr.Button("🔍 開始深度分析", variant="primary", size="lg")
+                sales_clear_btn = gr.Button("清除", size="lg")
+
+            with gr.Column(scale=2):
+                sales_output = gr.Markdown(
+                    label="業務分析報告",
+                    value="*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+                )
+                with gr.Row():
+                    sales_word_btn = gr.Button("📄 下載分析報告 Word", size="lg")
+                    sales_dashboard_btn = gr.Button("🎨 生成互動 HTML 儀表板", variant="secondary", size="lg")
+                with gr.Row():
+                    sales_download_word = gr.File(
+                        label="Word 分析報告", visible=False, interactive=False
+                    )
+                    sales_download_dashboard = gr.File(
+                        label="互動 HTML 儀表板", visible=False, interactive=False
+                    )
+
+        sales_btn.click(
+            fn=run_sales_analysis,
+            inputs=[file_upload4, sales_context, user_prompt4],
+            outputs=[sales_output],
+        )
+        sales_clear_btn.click(
+            fn=lambda: (None, "", "",
+                        "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+                        gr.update(visible=False), gr.update(visible=False)),
+            outputs=[file_upload4, sales_context, user_prompt4, sales_output,
+                     sales_download_word, sales_download_dashboard],
+        )
+        sales_word_btn.click(
+            fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
+            inputs=[sales_output],
+            outputs=[sales_download_word, sales_download_word],
+        )
+        sales_dashboard_btn.click(
+            fn=lambda content: (generate_sales_dashboard_html(content), gr.update(visible=True)),
+            inputs=[sales_output],
+            outputs=[sales_download_dashboard, sales_download_dashboard],
         )
 
 if __name__ == "__main__":
