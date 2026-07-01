@@ -2048,13 +2048,9 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                 )
                 with gr.Row():
                     sales_word_btn = gr.Button("📄 下載分析報告 Word", size="lg")
-                    sales_dashboard_btn = gr.Button("🎨 生成互動 HTML 儀表板", variant="secondary", size="lg")
                 with gr.Row():
                     sales_download_word = gr.File(
                         label="Word 分析報告", visible=False, interactive=False
-                    )
-                    sales_download_dashboard = gr.File(
-                        label="互動 HTML 儀表板", visible=False, interactive=False
                     )
 
                 gr.Markdown("---")
@@ -2085,19 +2081,14 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         sales_clear_btn.click(
             fn=lambda: (None, "", "",
                         "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(visible=False), gr.update(visible=False)),
+                        gr.update(visible=False)),
             outputs=[file_upload4, sales_context, user_prompt4, sales_output,
-                     sales_download_word, sales_download_dashboard],
+                     sales_download_word],
         )
         sales_word_btn.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
             inputs=[sales_output],
             outputs=[sales_download_word, sales_download_word],
-        )
-        sales_dashboard_btn.click(
-            fn=lambda content: (generate_sales_dashboard_html(content), gr.update(visible=True)),
-            inputs=[sales_output],
-            outputs=[sales_download_dashboard, sales_download_dashboard],
         )
         word_convert_btn.click(
             fn=lambda f: (docx_to_dashboard_html(f), gr.update(visible=True)),
