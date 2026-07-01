@@ -2067,7 +2067,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                         scale=2,
                     )
                     word_convert_btn = gr.Button(
-                        "📊 Word → HTML 儀表板", variant="secondary", size="lg", scale=1
+                        "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
                     )
                 word_convert_download = gr.File(
                     label="轉換後的互動 HTML 儀表板", visible=False, interactive=False
