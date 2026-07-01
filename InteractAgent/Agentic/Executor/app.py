@@ -1148,184 +1148,374 @@ SALES_SECTION_FORMATS = {
 **風險預警**（可能失敗的原因與預防策略）""",
 }
 
-DASHBOARD_HTML_SYSTEM = (
-    "你是一位專業的前端開發者與商業視覺設計師，擅長深色商業儀表板設計。"
-    "只輸出完整的 HTML 原始碼，不要任何說明或 markdown 包裝。"
-)
+# ── Tab 4 HTML dashboard: Python-rendered template (responsive) ────────────
 
-DASHBOARD_HTML_PROMPT = """\
-根據以下業務分析報告，產出一份「B2B 戰略情報室」風格的完整互動 HTML 儀表板。
+_DASH_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。"
 
-## 配色系統（定義為 CSS :root 變數）
---bg-primary: #0d1117
---bg-card: #161b22
---bg-card-2: #1a2035
---accent-gold: #f0b429
---accent-cyan: #21d4fd
---accent-red: #ff6b6b
---accent-purple: #8b5cf6
---accent-blue: #3b82f6
---accent-orange: #f97316
---text-primary: #e6edf3
---text-secondary: #8b949e
---border: rgba(33,212,253,0.15)
+_DASH_EXTRACT_PROMPT = """\
+請從以下業務分析報告提取資料，輸出 JSON（繁體中文）。
 
-字型：Google Fonts Noto Sans TC + Inter（CDN 載入）
-圖表：Chart.js https://cdn.jsdelivr.net/npm/chart.js
-
----
-
-## 區塊 1：頂部導覽列（sticky，高約 70px）
-左側（兩行）：
-  第一行：[≈] 圖標（青藍色）+ 粗體大標「B2B 戰略情報室」+ 細垂直分隔線 + 專案副標（從報告提取案例/專案名稱）
-  第二行：小字灰色「基於 [資料來源或檔案名稱] 之大數據與心理學深度解析」
-右側：兩個指標（金色標籤文字，上方灰色英文小標）：
-  TARGET CLIENT → 客戶公司名稱
-  EST. VALUE → High（戰略級客戶）/ Medium（一般客戶）/ Low（觀察中）
-
----
-
-## 區塊 2：三欄主體（CSS Grid，欄比 1 : 1.3 : 1，間距 16px，padding 20px）
-
-### 左欄：利害關係人矩陣
-標題「利害關係人矩陣」（白色粗體，底部金色2px線）
-
-從分析中識別每位關鍵人物，各產出一張卡片（#161b22背景，圓角12px，padding 16px，下邊距12px）：
-  ① 第一行：CSS漸層圓形頭像（直徑44px）+ 姓名（粗體白色）+ 斜線 + 職稱（灰色）
-  ② 角色徽章（行內標籤，圓角20px，小字，padding 3px 10px）：
-     Champion / 內部倡導者 → 背景 #ff6b6b，白色文字
-     Blocker / Gatekeeper / 風險控制者 → 背景 #8b5cf6，白色文字
-     Influencer / 影響者 → 背景 #3b82f6，白色文字
-     Decision Maker / 決策者 → 背景 #f0b429，黑色文字
-  ③ 屬性痛點（或屬性需求）：灰色小標「⊕ 屬性痛點」+ 白色正文（font-size 13px）
-  ④ 隱性恐懼區塊（背景 rgba(249,115,22,0.08)，左邊框3px橘色，padding 8px 12px，圓角4px）：
-     橘色 🔮 + 粗體「隱性恐懼 (Deep Fear)」+ 橘色斜體說明文字
-
-### 中欄：專案需求維度解析
-標題「專案需求維度解析」（白色粗體）
-
-Chart.js Radar Chart（canvas，height 300px）：
-  - 背景透明，gridLines 顏色 rgba(255,255,255,0.1)
-  - 維度（5-7個）：從分析痛點與需求維度中提取，如辨識準確率、系統整合度、操作簡化、導入風險、報表價值……
-  - Dataset 1（青藍 #21d4fd，fill rgba(33,212,253,0.15)）：「客戶期望值（痛點強烈度）」— 根據痛點嚴重程度給分
-  - Dataset 2（紅色 #ff6b6b，fill rgba(255,107,107,0.1)）：「傳統方案覆蓋度」— 數值普遍偏低顯示市場空白
-
-圖表正下方兩個並排指標卡（#1a2035，圓角8px）：
-  左：「關鍵決定因素」（白色粗體）：填入分析中最關鍵決策因素
-  右：「最高風險點」（紅色粗體）：填入分析中最高風險項目
-
-### 右欄：提案策略模擬器
-第一行：粗體白色「🏆 提案策略模擬器」+ 右側小按鈕「互動測試」（金色邊框，黑色背景）
-副標（灰色小字 13px）：勾選您預計在提案書中主打的策略，預測「贏單機率」與「客戶決策阻力」。
-
-策略列表（從分析的策略模擬章節提取4-5個策略，每個一行）：
-  格式：[checkbox.strategy-check，data-boost="N"，data-note="說明"] + 策略類型標籤（「主打」金色/「加值」藍色/「商務」灰色）+ 策略名稱（粗體白色）+ 策略說明（灰色小字）
-  第一個策略預設 checked
-  boost 值從分析中依策略重要性設定（如 +20, +15, +12, +10），總和不超過55
-
-底部預測卡（#0d1117背景，圓角10px，padding 16px，上邊距16px）：
-  第一行：「預測贏單機率 (Win Probability)」灰色小字 + 右側大金色粗體「<span id="win-prob">XX%</span>」（font-size 2rem）
-  第二行：漸層進度條（height 8px，圓角，背景 linear-gradient(90deg,#ff6b6b,#f97316,#f0b429,#22c55e)，外層灰色軌道）
-    → <div id="win-bar" style="height:8px;border-radius:4px;background:linear-gradient(...);width:XX%;transition:width 0.4s">
-  第三行：灰色小字 <span id="win-note">已強化優勢：……</span>
-
----
-
-## 區塊 3：下方兩欄（各50%，間距16px）
-
-左欄：隱藏洞察卡（border: 1px solid #f0b429，背景 rgba(240,180,41,0.05)，圓角12px，padding 20px）
-標題「⚡ 潛在機會：容易被忽略的關鍵信號」（金色粗體）
-3-4個條目：左側青藍色圓點 + 白色粗體標題 + 灰色說明（兩行內）
-
-右欄：精準行動計畫（#161b22，圓角12px，padding 20px）
-標題「精準行動計畫」（白色粗體）
-橫向時間軸（或縱向）：Week 1 → Week 2-4 → Month 2 → Month 3+
-每節點：金色圓點（8px）→ 連接橫線 → 節點卡（任務2-3條 + 里程碑說明）
-
----
-
-## JavaScript（嵌入 <script> 標籤）
-
-```javascript
-// 策略模擬器
-function updateWinProb() {
-  const base = 35;
-  let total = base, notes = [];
-  document.querySelectorAll('.strategy-check:checked').forEach(cb => {
-    total += parseInt(cb.dataset.boost || 0);
-    if (cb.dataset.note) notes.push(cb.dataset.note);
-  });
-  total = Math.min(total, 92);
-  document.getElementById('win-prob').textContent = total + '%';
-  document.getElementById('win-bar').style.width = total + '%';
-  document.getElementById('win-note').textContent = notes.length
-    ? '已強化優勢：' + notes.join('、') + '。'
-    : '請勾選策略以強化提案。';
+Schema：
+{
+  "subtitle": "案例或專案名稱（15字以內）",
+  "data_source": "資料來源或檔案名稱（精簡）",
+  "target_client": "客戶公司名稱",
+  "est_value": "High（戰略級客戶）| Medium（一般客戶）| Low（觀察中）",
+  "stakeholders": [
+    {
+      "name": "姓名或代稱",
+      "title": "職稱",
+      "role_type": "Champion|Blocker|Gatekeeper|Influencer|Decision Maker",
+      "role_label": "中文角色說明，如 內部倡導者 (Champion)",
+      "pain_points": "屬性痛點或需求，1-2句",
+      "deep_fear": "隱性恐懼，1句核心描述"
+    }
+  ],
+  "radar_dimensions": ["5個維度名稱"],
+  "radar_customer": [5個數字 1-10，代表客戶期望值],
+  "radar_traditional": [5個數字 1-10，傳統方案覆蓋度，通常偏低],
+  "key_factor": "關鍵決定因素",
+  "top_risk": "最高風險點",
+  "strategies": [
+    {
+      "label_type": "主打|加值|商務",
+      "name": "策略名稱",
+      "description": "一句說明",
+      "boost": 5到20之間的整數
+    }
+  ],
+  "insights": [{"title": "洞察標題", "description": "1-2句說明"}],
+  "action_plan": [
+    {"phase": "Week 1", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"}
+  ]
 }
-document.querySelectorAll('.strategy-check').forEach(cb =>
-  cb.addEventListener('change', updateWinProb));
-// 初始化
-updateWinProb();
 
-// Chart.js Radar 初始化（參見上方 canvas 元素）
-// KPI 數字計數動畫（若有 KPI 區塊）
-```
-
----
-
-## 必要 HTML class 名稱（強制使用，響應式依賴這些名稱）
-- 頂部導覽列：`<nav class="topnav">`
-- 三欄主體容器：`<div class="main-grid">`，CSS：`display:grid; grid-template-columns:1fr 1.3fr 1fr; gap:16px`
-- 下方兩欄容器：`<div class="bottom-grid">`，CSS：`display:grid; grid-template-columns:1fr 1fr; gap:16px`
-- KPI 卡片容器：`<div class="kpi-grid">`，CSS：`display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px`
-
-## 必要響應式 CSS（務必寫入 <style> 中）
-```css
-*, *::before, *::after { box-sizing: border-box; }
-img, canvas { max-width: 100%; }
-@media (max-width: 1100px) {
-  .main-grid { grid-template-columns: 1fr 1fr !important; }
-}
-@media (max-width: 768px) {
-  .main-grid { grid-template-columns: 1fr !important; }
-  .bottom-grid { grid-template-columns: 1fr !important; }
-  .topnav { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
-}
-@media (max-width: 480px) {
-  .kpi-grid { grid-template-columns: 1fr 1fr !important; }
-  body { font-size: 14px; }
-}
-```
-
-## <head> 必要 meta（第一行）
-`<meta name="viewport" content="width=device-width, initial-scale=1.0">`
-
----
-
-只輸出完整 HTML 原始碼（含所有 CSS 和 JS），不要任何說明或 ```html 包裝。
+只輸出 JSON，不要任何說明。
 
 ---
 分析報告：
-
 {analysis}
 """
 
-_RESPONSIVE_OVERRIDE = """\
-<style>
-/* responsive safety net */
-*,*::before,*::after{box-sizing:border-box}
+_DASH_CSS = """
+:root{--bg:#0d1117;--card:#161b22;--card2:#1a2035;--gold:#f0b429;--cyan:#21d4fd;
+--red:#ff6b6b;--purple:#8b5cf6;--blue:#3b82f6;--orange:#f97316;
+--text:#e6edf3;--muted:#8b949e;--border:rgba(33,212,253,.15)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC','Inter',sans-serif;font-size:14px;line-height:1.6}
 img,canvas{max-width:100%;height:auto}
-@media(max-width:1100px){.main-grid{grid-template-columns:1fr 1fr!important}}
+.topnav{display:flex;justify-content:space-between;align-items:center;padding:0 24px;min-height:70px;background:#0d1117;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;gap:12px;flex-wrap:wrap}
+.nav-left{display:flex;flex-direction:column;gap:2px}
+.nav-row1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.nav-icon{color:var(--cyan);font-size:18px;font-weight:700}
+.nav-title{font-size:16px;font-weight:700;color:var(--text)}
+.nav-sep{width:1px;height:18px;background:var(--border);flex-shrink:0}
+.nav-sub{font-size:13px;color:var(--muted)}
+.nav-src{font-size:11px;color:var(--muted);margin-top:1px}
+.nav-right{display:flex;gap:24px;flex-shrink:0}
+.nav-kpi{text-align:right}
+.nav-kpi-lbl{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+.nav-kpi-val{font-size:13px;font-weight:700;color:var(--gold)}
+.page{max-width:1400px;margin:0 auto;padding:20px 16px}
+.main-grid{display:grid;grid-template-columns:1fr 1.3fr 1fr;gap:16px;margin-bottom:16px;align-items:start}
+.bottom-grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.sec-title{font-size:13px;font-weight:700;color:var(--text);margin-bottom:12px;padding-bottom:6px;border-bottom:2px solid var(--gold);display:inline-block}
+.s-card{background:var(--card);border-radius:10px;padding:14px;margin-bottom:10px;border:1px solid var(--border)}
+.s-header{display:flex;align-items:center;gap:10px;margin-bottom:6px}
+.avatar{width:44px;height:44px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:700;flex-shrink:0}
+.av-c{background:linear-gradient(135deg,#ff6b6b,#ee0979);color:#fff}
+.av-b{background:linear-gradient(135deg,#8b5cf6,#6d28d9);color:#fff}
+.av-i{background:linear-gradient(135deg,#3b82f6,#1d4ed8);color:#fff}
+.av-d{background:linear-gradient(135deg,#f0b429,#d97706);color:#000}
+.av-x{background:linear-gradient(135deg,#64748b,#475569);color:#fff}
+.s-name{font-size:14px;font-weight:700;color:var(--text)}
+.s-ttl{font-size:11px;color:var(--muted)}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;margin-bottom:8px}
+.bC{background:#ff6b6b;color:#fff}.bB{background:#8b5cf6;color:#fff}
+.bI{background:#3b82f6;color:#fff}.bD{background:#f0b429;color:#000}.bX{background:#64748b;color:#fff}
+.pain-lbl{font-size:11px;color:var(--muted);margin-bottom:3px}
+.pain-txt{font-size:12px;color:var(--text);margin-bottom:8px;line-height:1.5}
+.fear-box{background:rgba(249,115,22,.08);border-left:3px solid var(--orange);border-radius:4px;padding:8px 10px}
+.fear-title{font-size:11px;font-weight:700;color:var(--orange);margin-bottom:2px}
+.fear-txt{font-size:12px;color:var(--orange);font-style:italic;line-height:1.4}
+.radar-wrap{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--border)}
+.radar-canvas-box{position:relative;height:270px;margin-bottom:12px}
+.radar-meta{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.rmeta-card{background:var(--card2);border-radius:8px;padding:10px 12px}
+.rmeta-lbl{font-size:10px;color:var(--muted);margin-bottom:2px}
+.rmeta-val{font-size:13px;font-weight:700;color:var(--text)}
+.rmeta-val.risk{color:var(--red)}
+.sim-wrap{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--border);display:flex;flex-direction:column}
+.sim-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.sim-title{font-size:14px;font-weight:700;color:var(--text)}
+.sim-btn{font-size:11px;border:1px solid var(--gold);background:transparent;color:var(--gold);padding:3px 10px;border-radius:4px}
+.sim-desc{font-size:11px;color:var(--muted);margin-bottom:14px;line-height:1.4}
+.st-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:12px;cursor:pointer}
+.st-item input{width:16px;height:16px;margin-top:2px;accent-color:var(--cyan);flex-shrink:0;cursor:pointer}
+.st-tag{font-size:10px;padding:1px 7px;border-radius:10px;font-weight:600;white-space:nowrap;margin-top:3px;flex-shrink:0}
+.tag-m{background:rgba(240,180,41,.2);color:var(--gold)}
+.tag-p{background:rgba(59,130,246,.2);color:var(--blue)}
+.tag-b{background:rgba(100,116,139,.2);color:#94a3b8}
+.st-name{font-size:13px;font-weight:700;color:var(--text)}
+.st-desc{font-size:11px;color:var(--muted);line-height:1.4}
+.win-card{background:var(--bg);border-radius:10px;padding:14px 16px;margin-top:auto;border:1px solid var(--border)}
+.win-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
+.win-lbl{font-size:12px;color:var(--muted)}
+.win-pct{font-size:2rem;font-weight:800;color:var(--gold);line-height:1}
+.win-track{height:8px;background:#1e293b;border-radius:4px;overflow:hidden;margin-bottom:6px}
+.win-bar{height:100%;border-radius:4px;background:linear-gradient(90deg,#ff6b6b,#f97316,#f0b429,#22c55e);transition:width .4s}
+.win-note{font-size:11px;color:var(--muted);line-height:1.4}
+.ins-card{border:1px solid var(--gold);background:rgba(240,180,41,.04);border-radius:12px;padding:20px}
+.ins-title{font-size:14px;font-weight:700;color:var(--gold);margin-bottom:14px}
+.ins-item{display:flex;gap:10px;margin-bottom:12px}
+.ins-dot{width:8px;height:8px;border-radius:50%;background:var(--cyan);flex-shrink:0;margin-top:5px}
+.ins-name{font-size:13px;font-weight:700;color:var(--text);margin-bottom:2px}
+.ins-desc{font-size:12px;color:var(--muted);line-height:1.5}
+.act-card{background:var(--card);border-radius:12px;padding:20px;border:1px solid var(--border)}
+.act-title{font-size:14px;font-weight:700;color:var(--text);margin-bottom:16px}
+.tl{display:flex;gap:0;overflow-x:auto}
+.tl-col{flex:1;min-width:110px;position:relative;padding-top:24px;padding-right:8px}
+.tl-col::before{content:'';position:absolute;top:7px;left:0;right:0;height:2px;background:var(--border)}
+.tl-col:first-child::before{left:50%}.tl-col:last-child::before{right:50%}
+.tl-dot{width:16px;height:16px;border-radius:50%;background:var(--gold);border:3px solid var(--bg);position:absolute;top:0;left:50%;transform:translateX(-50%)}
+.tl-phase{font-size:10px;font-weight:700;color:var(--gold);text-align:center;margin-bottom:6px}
+.tl-tasks{font-size:11px;color:var(--text);line-height:1.6}
+.tl-ms{font-size:10px;color:var(--muted);margin-top:4px;font-style:italic}
+@media(max-width:1100px){
+  .main-grid{grid-template-columns:1fr 1fr}
+  .main-grid>:last-child{grid-column:1/-1}
+}
 @media(max-width:768px){
-  .main-grid{grid-template-columns:1fr!important}
-  .bottom-grid{grid-template-columns:1fr!important}
-  .topnav{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}
+  .main-grid,.bottom-grid{grid-template-columns:1fr}
+  .main-grid>:last-child{grid-column:auto}
+  .topnav{min-height:auto;padding:12px 16px;flex-direction:column;align-items:flex-start}
+  .nav-right{width:100%;justify-content:flex-start;gap:20px}
 }
 @media(max-width:480px){
-  .kpi-grid{grid-template-columns:1fr 1fr!important}
-  body{font-size:14px}
+  .page{padding:10px 8px}
+  .win-pct{font-size:1.5rem}
+  .tl{flex-direction:column;gap:8px}
+  .tl-col{padding-top:0;padding-left:16px;border-left:2px solid var(--border);margin-left:8px}
+  .tl-col::before,.tl-dot{display:none}
 }
-</style>"""
+"""
+
+
+def _role_cls(role_type: str):
+    r = role_type.lower()
+    if "champion" in r or "倡導" in r:
+        return "av-c", "bC"
+    if any(x in r for x in ("blocker", "gatekeeper", "阻礙", "把關", "風險控制")):
+        return "av-b", "bB"
+    if "influencer" in r or "影響" in r:
+        return "av-i", "bI"
+    if "decision" in r or "決策" in r:
+        return "av-d", "bD"
+    return "av-x", "bX"
+
+
+def _render_stakeholders(items: list) -> str:
+    if not items:
+        return '<div class="s-card"><p style="color:var(--muted)">（未識別到明確利害關係人）</p></div>'
+    out = []
+    for s in items:
+        av, bv = _role_cls(s.get("role_type", ""))
+        out.append(
+            f'<div class="s-card">'
+            f'<div class="s-header">'
+            f'<div class="avatar {av}">{s.get("name","?")[:1]}</div>'
+            f'<div><div class="s-name">{s.get("name","")}</div>'
+            f'<div class="s-ttl">{s.get("title","")}</div></div></div>'
+            f'<span class="badge {bv}">{s.get("role_label", s.get("role_type",""))}</span>'
+            f'<div class="pain-lbl">⊕ 屬性痛點</div>'
+            f'<div class="pain-txt">{s.get("pain_points","")}</div>'
+            f'<div class="fear-box">'
+            f'<div class="fear-title">🔮 隱性恐懼 (Deep Fear)</div>'
+            f'<div class="fear-txt">{s.get("deep_fear","")}</div></div></div>'
+        )
+    return "".join(out)
+
+
+def _render_strategies(items: list):
+    if not items:
+        items = [{"label_type": "主打", "name": "顧問式提案", "description": "深度理解需求後提出完整解決方案。", "boost": 15}]
+    out, prob = [], 35
+    for i, s in enumerate(items):
+        checked = "checked" if i == 0 else ""
+        if i == 0:
+            prob = min(35 + s.get("boost", 0), 92)
+        lt = s.get("label_type", "主打")
+        tc = "tag-m" if lt == "主打" else ("tag-p" if lt == "加值" else "tag-b")
+        out.append(
+            f'<label class="st-item">'
+            f'<input type="checkbox" class="strategy-check" '
+            f'data-boost="{s.get("boost",10)}" data-note="{s.get("name","")}" {checked}>'
+            f'<span class="st-tag {tc}">{lt}</span>'
+            f'<div><div class="st-name">{s.get("name","")}</div>'
+            f'<div class="st-desc">{s.get("description","")}</div></div></label>'
+        )
+    return "".join(out), prob
+
+
+def _render_insights(items: list) -> str:
+    return "".join(
+        f'<div class="ins-item"><div class="ins-dot"></div>'
+        f'<div><div class="ins-name">{i.get("title","")}</div>'
+        f'<div class="ins-desc">{i.get("description","")}</div></div></div>'
+        for i in items
+    ) if items else '<p style="color:var(--muted);font-size:12px">（無隱藏洞察資料）</p>'
+
+
+def _render_timeline(items: list) -> str:
+    if not items:
+        items = [
+            {"phase": "Week 1", "tasks": ["初步接觸", "需求確認"], "milestone": "建立信任"},
+            {"phase": "Week 2-4", "tasks": ["提案準備", "方案調整"], "milestone": "提案送出"},
+            {"phase": "Month 2", "tasks": ["PoC 試點", "效益驗證"], "milestone": "初步成效"},
+            {"phase": "Month 3+", "tasks": ["正式合作", "擴展計畫"], "milestone": "簽約落地"},
+        ]
+    return "".join(
+        f'<div class="tl-col"><div class="tl-dot"></div>'
+        f'<div class="tl-phase">{p.get("phase","")}</div>'
+        f'<div class="tl-tasks">{"".join(f"・{t}<br>" for t in p.get("tasks",[]))}</div>'
+        f'<div class="tl-ms">{p.get("milestone","")}</div></div>'
+        for p in items
+    )
+
+
+def _extract_dashboard_json(analysis: str) -> dict:
+    import json as _j
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
+                {"role": "user", "content": _DASH_EXTRACT_PROMPT.format(analysis=analysis[:10000])},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=2000,
+            temperature=0,
+        )
+        return _j.loads(resp.choices[0].message.content)
+    except Exception:
+        return {}
+
+
+def _render_dashboard_html(data: dict) -> str:
+    import json as _j
+    subtitle    = data.get("subtitle", "業務智能分析")
+    data_source = data.get("data_source", "業務分析資料")
+    target_client = data.get("target_client", "目標客戶")
+    est_value   = data.get("est_value", "High（戰略級客戶）")
+    key_factor  = data.get("key_factor", "—")
+    top_risk    = data.get("top_risk", "—")
+
+    dims   = data.get("radar_dimensions", ["客戶需求", "整合難度", "操作性", "導入風險", "效益價值"])
+    r_cust = data.get("radar_customer",   [8, 7, 6, 9, 8])
+    r_trad = data.get("radar_traditional",[5, 4, 6, 3, 5])
+    n = max(len(dims), len(r_cust), len(r_trad))
+    dims   = (dims   + ["—"] * n)[:n]
+    r_cust = (r_cust + [5]   * n)[:n]
+    r_trad = (r_trad + [5]   * n)[:n]
+
+    s_html           = _render_stakeholders(data.get("stakeholders", []))
+    strategies_html, init_prob = _render_strategies(data.get("strategies", []))
+    ins_html         = _render_insights(data.get("insights", []))
+    tl_html          = _render_timeline(data.get("action_plan", []))
+
+    parts = [
+        "<!DOCTYPE html>",
+        "<html lang='zh-TW'>",
+        "<head>",
+        '<meta charset="UTF-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        "<title>B2B 戰略情報室</title>",
+        '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700'
+        '&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">',
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>',
+        f"<style>{_DASH_CSS}</style>",
+        "</head>",
+        "<body>",
+        # ── Nav ──
+        '<nav class="topnav">',
+        '<div class="nav-left">',
+        '<div class="nav-row1">',
+        '<span class="nav-icon">≈</span>',
+        '<span class="nav-title">B2B 戰略情報室</span>',
+        '<div class="nav-sep"></div>',
+        f'<span class="nav-sub">{subtitle}</span>',
+        '</div>',
+        f'<div class="nav-src">基於「{data_source}」之大數據與心理學深度解析</div>',
+        '</div>',
+        '<div class="nav-right">',
+        f'<div class="nav-kpi"><div class="nav-kpi-lbl">TARGET CLIENT</div><div class="nav-kpi-val">{target_client}</div></div>',
+        f'<div class="nav-kpi"><div class="nav-kpi-lbl">EST. VALUE</div><div class="nav-kpi-val">{est_value}</div></div>',
+        '</div></nav>',
+        # ── Page ──
+        '<div class="page">',
+        '<div class="main-grid">',
+        # Col 1: Stakeholders
+        f'<div><div class="sec-title">利害關係人矩陣</div>{s_html}</div>',
+        # Col 2: Radar
+        '<div class="radar-wrap">',
+        '<div class="sec-title">專案需求維度解析</div>',
+        '<div class="radar-canvas-box"><canvas id="radarChart"></canvas></div>',
+        '<div class="radar-meta">',
+        f'<div class="rmeta-card"><div class="rmeta-lbl">關鍵決定因素</div><div class="rmeta-val">{key_factor}</div></div>',
+        f'<div class="rmeta-card"><div class="rmeta-lbl">最高風險點</div><div class="rmeta-val risk">{top_risk}</div></div>',
+        '</div></div>',
+        # Col 3: Strategy sim
+        '<div class="sim-wrap">',
+        '<div class="sim-top"><span class="sim-title">🏆 提案策略模擬器</span><span class="sim-btn">互動測試</span></div>',
+        '<div class="sim-desc">勾選您預計在提案書中主打的策略，預測「贏單機率」與「客戶決策阻力」。</div>',
+        strategies_html,
+        '<div class="win-card">',
+        '<div class="win-row"><span class="win-lbl">預測贏單機率 (Win Probability)</span>',
+        f'<span class="win-pct" id="win-prob">{init_prob}%</span></div>',
+        f'<div class="win-track"><div class="win-bar" id="win-bar" style="width:{init_prob}%"></div></div>',
+        '<div class="win-note" id="win-note">已強化優勢：請勾選策略以啟動預測。</div>',
+        '</div></div>',
+        '</div>',  # end main-grid
+        # ── Bottom ──
+        '<div class="bottom-grid">',
+        f'<div class="ins-card"><div class="ins-title">⚡ 潛在機會：容易被忽略的關鍵信號</div>{ins_html}</div>',
+        f'<div class="act-card"><div class="act-title">精準行動計畫</div><div class="tl">{tl_html}</div></div>',
+        '</div>',  # end bottom-grid
+        '</div>',  # end page
+        # ── JS ──
+        "<script>",
+        "function updateWinProb(){",
+        "var base=35,total=base,notes=[];",
+        "document.querySelectorAll('.strategy-check:checked').forEach(function(cb){",
+        "total+=parseInt(cb.dataset.boost||0);",
+        "if(cb.dataset.note)notes.push(cb.dataset.note);});",
+        "total=Math.min(total,92);",
+        "document.getElementById('win-prob').textContent=total+'%';",
+        "document.getElementById('win-bar').style.width=total+'%';",
+        "document.getElementById('win-note').textContent=notes.length",
+        "?'已強化優勢：'+notes.join('、')+'。'",
+        ":'請勾選策略以啟動預測。';}",
+        "document.querySelectorAll('.strategy-check').forEach(function(cb){cb.addEventListener('change',updateWinProb);});",
+        "updateWinProb();",
+        f"var dims={_j.dumps(dims,ensure_ascii=False)};",
+        f"var cust={_j.dumps(r_cust)};",
+        f"var trad={_j.dumps(r_trad)};",
+        "new Chart(document.getElementById('radarChart'),{type:'radar',",
+        "data:{labels:dims,datasets:[",
+        "{label:'客戶期望值（痛點強烈度）',data:cust,borderColor:'#21d4fd',",
+        "backgroundColor:'rgba(33,212,253,.15)',pointBackgroundColor:'#21d4fd',borderWidth:2},",
+        "{label:'傳統方案覆蓋度',data:trad,borderColor:'#ff6b6b',",
+        "backgroundColor:'rgba(255,107,107,.1)',pointBackgroundColor:'#ff6b6b',borderWidth:2}]},",
+        "options:{responsive:true,maintainAspectRatio:false,",
+        "plugins:{legend:{labels:{color:'#8b949e',font:{size:11}}}},",
+        "scales:{r:{angleLines:{color:'rgba(255,255,255,.1)'},grid:{color:'rgba(255,255,255,.1)'},",
+        "pointLabels:{color:'#e6edf3',font:{size:11}},ticks:{display:false},min:0,max:10}}}});",
+        "</script>",
+        "</body></html>",
+    ]
+    return "\n".join(parts)
+
 
 
 class SalesState(TypedDict):
@@ -1445,38 +1635,10 @@ def run_sales_analysis(file_list, user_context: str, user_prompt: str = ""):
 
 
 def generate_sales_dashboard_html(analysis_content: str):
-    import re as _re
     if not analysis_content or "逐章節分析中" in analysis_content or analysis_content.startswith("*送出"):
         return None
-
-    prompt = DASHBOARD_HTML_PROMPT.format(analysis=analysis_content[:12000])
-
-    response = openai_client.chat.completions.create(
-        model="gpt-4o",
-        messages=[
-            {"role": "system", "content": DASHBOARD_HTML_SYSTEM},
-            {"role": "user", "content": prompt},
-        ],
-        max_tokens=8000,
-        temperature=0.2,
-    )
-
-    html_content = response.choices[0].message.content.strip()
-    html_content = _re.sub(r"^```html\s*\n?", "", html_content, flags=_re.MULTILINE)
-    html_content = _re.sub(r"^```\s*$", "", html_content, flags=_re.MULTILINE)
-    html_content = html_content.strip()
-
-    # Guarantee viewport meta tag
-    viewport = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
-    if "viewport" not in html_content:
-        html_content = html_content.replace("<head>", "<head>\n  " + viewport, 1)
-
-    # Inject responsive CSS override before </body>
-    if "</body>" in html_content:
-        html_content = html_content.replace("</body>", _RESPONSIVE_OVERRIDE + "\n</body>", 1)
-    else:
-        html_content += "\n" + _RESPONSIVE_OVERRIDE
-
+    data = _extract_dashboard_json(analysis_content)
+    html_content = _render_dashboard_html(data)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
     tmp.close()
