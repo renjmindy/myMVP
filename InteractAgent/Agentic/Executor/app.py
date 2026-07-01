@@ -1273,6 +1273,35 @@ updateWinProb();
 
 ---
 
+## 必要 HTML class 名稱（強制使用，響應式依賴這些名稱）
+- 頂部導覽列：`<nav class="topnav">`
+- 三欄主體容器：`<div class="main-grid">`，CSS：`display:grid; grid-template-columns:1fr 1.3fr 1fr; gap:16px`
+- 下方兩欄容器：`<div class="bottom-grid">`，CSS：`display:grid; grid-template-columns:1fr 1fr; gap:16px`
+- KPI 卡片容器：`<div class="kpi-grid">`，CSS：`display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:12px`
+
+## 必要響應式 CSS（務必寫入 <style> 中）
+```css
+*, *::before, *::after { box-sizing: border-box; }
+img, canvas { max-width: 100%; }
+@media (max-width: 1100px) {
+  .main-grid { grid-template-columns: 1fr 1fr !important; }
+}
+@media (max-width: 768px) {
+  .main-grid { grid-template-columns: 1fr !important; }
+  .bottom-grid { grid-template-columns: 1fr !important; }
+  .topnav { flex-direction: column !important; align-items: flex-start !important; gap: 8px !important; }
+}
+@media (max-width: 480px) {
+  .kpi-grid { grid-template-columns: 1fr 1fr !important; }
+  body { font-size: 14px; }
+}
+```
+
+## <head> 必要 meta（第一行）
+`<meta name="viewport" content="width=device-width, initial-scale=1.0">`
+
+---
+
 只輸出完整 HTML 原始碼（含所有 CSS 和 JS），不要任何說明或 ```html 包裝。
 
 ---
@@ -1280,6 +1309,23 @@ updateWinProb();
 
 {analysis}
 """
+
+_RESPONSIVE_OVERRIDE = """\
+<style>
+/* responsive safety net */
+*,*::before,*::after{box-sizing:border-box}
+img,canvas{max-width:100%;height:auto}
+@media(max-width:1100px){.main-grid{grid-template-columns:1fr 1fr!important}}
+@media(max-width:768px){
+  .main-grid{grid-template-columns:1fr!important}
+  .bottom-grid{grid-template-columns:1fr!important}
+  .topnav{flex-direction:column!important;align-items:flex-start!important;gap:8px!important}
+}
+@media(max-width:480px){
+  .kpi-grid{grid-template-columns:1fr 1fr!important}
+  body{font-size:14px}
+}
+</style>"""
 
 
 class SalesState(TypedDict):
@@ -1419,6 +1465,17 @@ def generate_sales_dashboard_html(analysis_content: str):
     html_content = _re.sub(r"^```html\s*\n?", "", html_content, flags=_re.MULTILINE)
     html_content = _re.sub(r"^```\s*$", "", html_content, flags=_re.MULTILINE)
     html_content = html_content.strip()
+
+    # Guarantee viewport meta tag
+    viewport = '<meta name="viewport" content="width=device-width, initial-scale=1.0">'
+    if "viewport" not in html_content:
+        html_content = html_content.replace("<head>", "<head>\n  " + viewport, 1)
+
+    # Inject responsive CSS override before </body>
+    if "</body>" in html_content:
+        html_content = html_content.replace("</body>", _RESPONSIVE_OVERRIDE + "\n</body>", 1)
+    else:
+        html_content += "\n" + _RESPONSIVE_OVERRIDE
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
