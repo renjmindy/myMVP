@@ -1645,6 +1645,30 @@ def generate_sales_dashboard_html(analysis_content: str):
     return tmp.name
 
 
+def docx_to_dashboard_html(file_obj):
+    """Extract text from a .docx file and render it as an interactive HTML dashboard."""
+    if file_obj is None:
+        return None
+    from docx import Document as _DocxDocument
+    doc = _DocxDocument(file_obj.name)
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    # Also extract tables
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                paragraphs.append(" | ".join(cells))
+    text = "\n".join(paragraphs)
+    if not text.strip():
+        return None
+    data = _extract_dashboard_json(text)
+    html_content = _render_dashboard_html(data)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+    return tmp.name
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2033,6 +2057,26 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                         label="互動 HTML 儀表板", visible=False, interactive=False
                     )
 
+                gr.Markdown("---")
+                gr.Markdown("### 📄 Word 直轉互動儀表板")
+                gr.Markdown(
+                    "上傳現有 Word 報告（.docx），直接轉換為互動 HTML 儀表板，"
+                    "**無需重新分析**，速度更快。"
+                )
+                with gr.Row():
+                    word_direct_upload = gr.File(
+                        label="上傳 Word 檔案 (.docx)",
+                        file_types=[".docx"],
+                        file_count="single",
+                        scale=2,
+                    )
+                    word_convert_btn = gr.Button(
+                        "📊 Word → HTML 儀表板", variant="secondary", size="lg", scale=1
+                    )
+                word_convert_download = gr.File(
+                    label="轉換後的互動 HTML 儀表板", visible=False, interactive=False
+                )
+
         sales_btn.click(
             fn=run_sales_analysis,
             inputs=[file_upload4, sales_context, user_prompt4],
@@ -2054,6 +2098,11 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda content: (generate_sales_dashboard_html(content), gr.update(visible=True)),
             inputs=[sales_output],
             outputs=[sales_download_dashboard, sales_download_dashboard],
+        )
+        word_convert_btn.click(
+            fn=lambda f: (docx_to_dashboard_html(f), gr.update(visible=True)),
+            inputs=[word_direct_upload],
+            outputs=[word_convert_download, word_convert_download],
         )
 
 if __name__ == "__main__":
