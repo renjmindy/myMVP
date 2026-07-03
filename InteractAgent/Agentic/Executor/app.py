@@ -1670,6 +1670,977 @@ def docx_to_dashboard_html(file_obj):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# TAB 5 — 數據分析Agent（業務提案戰情室）(Plan-Execute架構)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DATA_AGENT_SYSTEM = """
+你是一位資深業務戰情分析師與資料科學顧問，名稱為「數據分析Agent」。
+你的任務是協助業務即時判斷客戶狀態、成交機會、提案風險、決策鏈、追蹤優先順序與下一步策略，
+建立一個可用於主管簡報與業務日常追蹤的「業務提案戰情室」分析報告。
+
+## 核心目標
+整合資料證據、客戶洞察、風險判斷、決策鏈、提案策略與情境模擬，
+協助業務判斷：
+- 客戶目前卡在哪個環節
+- 成交機會與主要阻力
+- 不同提案策略的優劣與話術
+- 風險、ROI、時程與決策壓力的變化
+- 下一步該補什麼資料、該說服誰、該何時追蹤、該傳什麼訊息
+
+## 核心體驗
+- 一眼掌握客戶目前卡關位置
+- 快速判斷成交機會與主要阻力
+- 切換不同提案策略並比較結果
+- 模擬風險、ROI、時程與決策壓力變化
+- 產出可直接用於客戶追蹤的話術與行動表
+
+## 分析原則
+- 每個判斷都要連回業務行動，不只是描述現象
+- 每個判斷都要標示所依據的資料線索
+- 成交機率、ROI、風險等級一律採「相對評分」，不得假裝為精確預測
+- 資料不足時，明確列出待補數字與待確認條件，不得憑空捏造
+- 策略模擬需清楚標示為「策略推估」
+- 語氣專業、精簡、具主管簡報質感，避免學術化贅字
+
+輸出語言：繁體中文。
+"""
+
+DATA_SECTIONS = [
+    "戰情總覽",
+    "客戶輪廓",
+    "需求痛點",
+    "決策鏈",
+    "風險地圖",
+    "策略模擬",
+    "ROI情境",
+    "行動追蹤",
+    "證據資料",
+]
+
+DATA_SECTION_FORMATS = {
+    "戰情總覽": """\
+請用以下格式輸出：
+| 判斷項目 | 內容 |
+|---|---|
+| 客戶／案子名稱 |  |
+| 目前決策階段 |  |
+| 成交機會（相對評分 0-100） |  |
+| 風險等級（相對評分 0-100） |  |
+| 目前最大成交機會 |  |
+| 目前最大風險 |  |
+| 建議下一步 |  |
+
+最後列出「主管簡報重點」3-5條，每條一句話，適合投影片使用。""",
+    "客戶輪廓": """\
+請說明：
+- **產業與公司背景**
+- **公司規模／營運概況**
+- **目前現況**（與本次提案相關的營運狀態）
+- **對本次提案的態度與訊號**
+若資訊不足，請標示「需補充」。""",
+    "需求痛點": """\
+請用以下表格格式輸出：
+| 痛點 | 嚴重程度（1-10） | 對客戶的影響 | 資料依據 |
+|---|---|---|---|
+最後說明：最優先需要解決的痛點與理由。""",
+    "決策鏈": """\
+請識別所有關鍵利害關係人，每位格式如下：
+
+**[姓名或代稱] / [職稱]**
+- 角色類型：Champion（內部倡導者）/ Blocker（阻礙者）/ Gatekeeper（把關者）/ Influencer（影響者）/ Decision Maker（決策者）
+- 影響力（1-10）
+- 目前支持度（1-10，10為完全支持）
+- 說服重點：[如何針對此人調整策略，1-2句]
+
+最後列出：影響成交最關鍵的人與理由。""",
+    "風險地圖": """\
+請用以下表格格式輸出：
+| 風險 | 等級（高/中/低） | 類別（價格/時程/技術/人員/決策） | 緩解措施 | 資料依據 |
+|---|---|---|---|---|
+最後說明：目前最需要立即處理的風險。""",
+    "策略模擬": """\
+請模擬三種提案策略，每種策略需包含：適合情境、成交機會（相對評分）、主要風險、建議話術（可直接使用的一段話）、下一步行動。
+所有結果請標示為「策略推估」。
+
+**策略一：保守試點型**（先小規模驗證，降低客戶疑慮）
+
+**策略二：快速導入型**（強調效率與時效，加快推進速度）
+
+**策略三：主管決策型**（直接訴求高層價值與決策效益）
+
+最後給出：根據本次分析，最推薦哪個策略及理由。""",
+    "ROI情境": """\
+請模擬三種 ROI 情境（保守效益／一般效益／積極效益），每種需包含：
+可能節省成本（每年，新台幣萬元）、品質改善價值、客訴下降價值、回收期估算（月）、需要確認的關鍵數字。
+請標示為「策略推估」，並列出計算所依據的假設。""",
+    "行動追蹤": """\
+請輸出：
+**追蹤優先順序模擬**
+- 最該先補的資料
+- 最該先說服的角色
+- 最適合的追蹤時間
+- 最合適的下一封訊息（可直接使用的訊息草稿）
+
+**行動項目清單**
+| 行動項目 | 負責人 | 建議時間 |
+|---|---|---|""",
+    "證據資料": """\
+請列出支持以上判斷的關鍵資料線索，每條包含：資料摘要、對應章節結論、原始資料來源。
+最後列出「待補資料清單」，說明資訊不足處與建議補充問題。""",
+}
+
+
+class DataState(TypedDict):
+    input: str
+    plan: List[str]
+    past_steps: Annotated[List[Tuple[str, str]], operator.add]
+    response: str
+
+
+class DataPlan(BaseModel):
+    """業務提案戰情室章節計畫"""
+    steps: List[str] = Field(description="依序需要產出的分析章節名稱列表")
+
+
+def data_planner(state: DataState):
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DATA_AGENT_SYSTEM),
+        ("human",
+         "請分析以下資料，決定最適合的戰情室分析章節順序。\n"
+         "可選章節：" + "／".join(DATA_SECTIONS) + "\n"
+         "請列出所有章節，依最佳分析邏輯排序。\n\n"
+         "資料內容：\n{input}")
+    ])
+    planner = prompt | llm_4o.with_structured_output(DataPlan)
+    result = planner.invoke({"input": state["input"]})
+    return {"plan": result.steps}
+
+
+def data_executor(state: DataState):
+    section = state["plan"][0]
+    completed = "\n\n".join(
+        f"### {s}\n{r}" for s, r in state["past_steps"]
+    ) if state["past_steps"] else "（尚無已完成章節）"
+    section_key = next((k for k in DATA_SECTION_FORMATS if k in section), None)
+    format_hint = f"\n\n**格式要求：**\n{DATA_SECTION_FORMATS[section_key]}" if section_key else ""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DATA_AGENT_SYSTEM),
+        ("human",
+         "原始資料：\n{input}\n\n"
+         "已完成章節（供參考，保持一致性）：\n{completed}\n\n"
+         "請現在產出「{section}」的完整內容。內容要具體、可操作、直接對業務員有用。{format_hint}")
+    ])
+    chain = prompt | llm_4o
+    result = chain.invoke({
+        "input": state["input"],
+        "completed": completed,
+        "section": section,
+        "format_hint": format_hint,
+    })
+    return {"past_steps": [(section, result.content)]}
+
+
+def data_replanner(state: DataState):
+    remaining = state["plan"][1:]
+    if not remaining:
+        full_output = "\n\n---\n\n".join(
+            f"## {section}\n\n{content}"
+            for section, content in state["past_steps"]
+        )
+        return {"response": full_output}
+    return {"plan": remaining}
+
+
+def data_should_end(state: DataState):
+    return "end" if state.get("response") else "continue"
+
+
+def build_data_graph():
+    wf = StateGraph(DataState)
+    wf.add_node("planner", data_planner)
+    wf.add_node("executor", data_executor)
+    wf.add_node("re_planner", data_replanner)
+    wf.set_entry_point("planner")
+    wf.add_edge("planner", "executor")
+    wf.add_edge("executor", "re_planner")
+    wf.add_conditional_edges("re_planner", data_should_end, {"continue": "executor", "end": END})
+    return wf.compile()
+
+
+data_graph = build_data_graph()
+
+
+def run_data_analysis(file_list, user_context: str, user_prompt: str = ""):
+    parts = []
+    if file_list:
+        file_text = extract_files_text(file_list)
+        if file_text.strip():
+            parts.append(file_text)
+    if user_context and user_context.strip():
+        parts.append(f"補充背景資訊：\n{user_context.strip()}")
+    if user_prompt and user_prompt.strip():
+        parts.append(f"使用者額外指示：\n{user_prompt.strip()}")
+
+    text = "\n\n---\n\n".join(parts)
+    if not text.strip():
+        yield "⚠️ 請上傳附件或輸入資料後再送出。"
+        return
+
+    output = ""
+    plan_shown = False
+
+    for event in data_graph.stream({"input": text}, {"recursion_limit": 40}):
+        for node_name, value in event.items():
+            if node_name == "planner" and "plan" in value and not plan_shown:
+                plan_shown = True
+                output = "### 📋 戰情室章節規劃\n" + "\n".join(
+                    f"{i+1}. {s}" for i, s in enumerate(value["plan"])
+                ) + "\n\n---\n\n*逐章節分析中……*\n\n"
+                yield output
+            elif node_name == "executor" and "past_steps" in value:
+                for section, content in value["past_steps"]:
+                    output = output.replace("*逐章節分析中……*\n\n", "")
+                    output += f"## {section}\n\n{content}\n\n---\n\n*逐章節分析中……*\n\n"
+                    yield output
+            elif node_name == "re_planner" and value.get("response"):
+                yield value["response"]
+
+
+# ── Tab 5 HTML war-room dashboard: Python-rendered template (responsive) ───
+
+_WR_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。"
+
+_WR_EXTRACT_PROMPT = """\
+請從以下業務提案戰情室分析報告提取資料，輸出 JSON（繁體中文）。
+所有評分一律為「相對評分」，數字不足時請合理估算並不得留空。
+
+Schema：
+{
+  "hero": {
+    "client_name": "客戶或案子名稱",
+    "industry_title": "客戶產業／情境標題（15字以內）",
+    "decision_stage": "目前決策階段（簡短）",
+    "main_opportunity": "最大成交機會（一句話）",
+    "top_risk": "最大風險（一句話）",
+    "next_step": "建議下一步（一句話）"
+  },
+  "kpi": {
+    "deal_score": 0到100整數（成交機會）,
+    "risk_score": 0到100整數（風險等級）,
+    "readiness_score": 0到100整數（導入準備度）,
+    "roi_potential": 0到100整數（ROI潛力）
+  },
+  "exec_summary": ["主管簡報重點1", "重點2", "重點3"],
+  "data_source": "資料來源或檔案名稱",
+  "est_value": "High（戰略級客戶）| Medium（一般客戶）| Low（觀察中）",
+  "customer_profile": {
+    "industry": "產業別",
+    "company_size": "公司規模",
+    "current_situation": "目前現況",
+    "background": "背景說明"
+  },
+  "pain_points": [
+    {"title": "痛點名稱", "description": "說明", "severity": "高|中|低", "evidence_ref": "資料依據"}
+  ],
+  "decision_chain": [
+    {"name": "姓名或代稱", "title": "職稱", "role_type": "Champion|Blocker|Gatekeeper|Influencer|Decision Maker",
+     "role_label": "中文角色說明，如 內部倡導者 (Champion)", "influence": 1到10, "support_level": 1到10, "notes": "說服重點"}
+  ],
+  "risk_map": [
+    {"risk": "風險名稱", "level": "高|中|低", "category": "價格|時程|技術|人員|決策", "mitigation": "緩解措施", "evidence_ref": "資料依據"}
+  ],
+  "radar_dimensions": ["5個維度名稱，如 價格接受度、時程壓力、技術整合度、決策層支持、現場配合度"],
+  "radar_opportunity": [5個數字 1-10，代表成交機會強度],
+  "radar_resistance": [5個數字 1-10，代表阻力強度],
+  "strategy_modes": {
+    "conservative": {"title": "保守試點型", "fit_scenario": "適合情境", "deal_chance": 0到100整數, "main_risk": "主要風險", "talk_track": "建議話術，可直接使用的一段話", "next_action": "下一步行動"},
+    "fast": {"title": "快速導入型", "fit_scenario": "...", "deal_chance": 0到100整數, "main_risk": "...", "talk_track": "...", "next_action": "..."},
+    "executive": {"title": "主管決策型", "fit_scenario": "...", "deal_chance": 0到100整數, "main_risk": "...", "talk_track": "...", "next_action": "..."}
+  },
+  "risk_factors": [
+    {"id": "price", "label": "價格敏感度", "default": 0到100, "inverse": false, "data_needed_if_high": "價格敏感度偏高時，需要補強的資料"},
+    {"id": "downtime", "label": "停線風險", "default": 0到100, "inverse": false, "data_needed_if_high": "..."},
+    {"id": "complexity", "label": "導入麻煩程度", "default": 0到100, "inverse": false, "data_needed_if_high": "..."},
+    {"id": "support", "label": "決策者支持度", "default": 0到100, "inverse": true, "data_needed_if_high": "決策者支持度偏低時，需要補強的資料"},
+    {"id": "resistance", "label": "現場人員排斥程度", "default": 0到100, "inverse": false, "data_needed_if_high": "..."}
+  ],
+  "roi_scenarios": {
+    "conservative": {"cost_saving": 數字（萬元/年）, "quality_value": 數字（萬元/年）, "complaint_value": 數字（萬元/年）, "payback_months": 數字, "need_confirm": ["待確認數字1", "待確認數字2"]},
+    "normal": {"cost_saving": 數字, "quality_value": 數字, "complaint_value": 數字, "payback_months": 數字, "need_confirm": ["..."]},
+    "aggressive": {"cost_saving": 數字, "quality_value": 數字, "complaint_value": 數字, "payback_months": 數字, "need_confirm": ["..."]}
+  },
+  "follow_up": {
+    "top_data_needed": "最該先補的資料",
+    "top_person": "最該先說服的角色",
+    "best_timing": "最適合的追蹤時間",
+    "next_message": "最合適的下一封訊息草稿"
+  },
+  "action_items": [
+    {"task": "行動項目", "owner": "負責人", "due": "建議時間"}
+  ],
+  "evidence": [
+    {"title": "證據標題", "summary": "一句話摘要", "detail": "完整內容或引用", "source": "資料來源"}
+  ]
+}
+
+只輸出 JSON，不要任何說明。
+
+---
+分析報告：
+{analysis}
+"""
+
+_WR_CSS = """
+:root{--bg:#0a1220;--bg2:#0d1b2a;--card:#111f33;--card2:#16283f;--navy:#0f1b2e;
+--steel:#64748b;--white:#f8fafc;--techblue:#38bdf8;--blue:#2563eb;
+--orange:#f97316;--green:#22c55e;--red:#ef4444;
+--text:#e6edf3;--muted:#93a2b8;--border:rgba(56,189,248,.15)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC','Inter',sans-serif;font-size:14px;line-height:1.6}
+img,canvas{max-width:100%;height:auto}
+.wr-hero{position:relative;padding:56px 24px 40px;overflow:hidden;
+background:radial-gradient(circle at 20% 20%,rgba(56,189,248,.18),transparent 45%),
+radial-gradient(circle at 80% 0%,rgba(37,99,235,.22),transparent 50%),
+linear-gradient(160deg,#0a1220 0%,#0d1b2a 55%,#111f33 100%);
+border-bottom:1px solid var(--border)}
+.wr-hero::before{content:'';position:absolute;inset:0;opacity:.5;pointer-events:none;
+background-image:
+  linear-gradient(rgba(148,163,184,.06) 1px,transparent 1px),
+  linear-gradient(90deg,rgba(148,163,184,.06) 1px,transparent 1px);
+background-size:36px 36px}
+.wr-hero-inner{position:relative;max-width:1400px;margin:0 auto}
+.wr-tag{display:inline-block;font-size:11px;letter-spacing:2px;color:var(--techblue);
+text-transform:uppercase;border:1px solid var(--border);padding:4px 12px;border-radius:20px;margin-bottom:14px}
+.wr-title{font-size:clamp(22px,3.4vw,34px);font-weight:800;color:var(--white);margin-bottom:6px}
+.wr-sub{font-size:14px;color:var(--muted);margin-bottom:26px}
+.wr-hero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:22px}
+.hero-card{background:rgba(17,31,51,.7);backdrop-filter:blur(6px);border:1px solid var(--border);
+border-radius:12px;padding:16px}
+.hero-card .lbl{font-size:11px;color:var(--muted);letter-spacing:1px;text-transform:uppercase;margin-bottom:6px}
+.hero-card .val{font-size:15px;font-weight:700;color:var(--white);line-height:1.4}
+.hero-card.opp .val{color:var(--green)}
+.hero-card.risk .val{color:var(--orange)}
+.kpi-row{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+.kpi-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;text-align:center}
+.kpi-num{font-size:2rem;font-weight:800;color:var(--techblue);line-height:1}
+.kpi-lbl{font-size:11px;color:var(--muted);margin-top:6px;letter-spacing:.5px}
+.kpi-card.risk .kpi-num{color:var(--orange)}
+.kpi-card.opp .kpi-num{color:var(--green)}
+.wr-nav{position:sticky;top:0;z-index:100;background:#0a1220;border-bottom:1px solid var(--border);
+display:flex;gap:4px;overflow-x:auto;padding:0 16px}
+.wr-nav-btn{flex-shrink:0;background:transparent;border:none;color:var(--muted);font-size:13px;
+font-weight:600;padding:14px 16px;cursor:pointer;border-bottom:2px solid transparent;white-space:nowrap}
+.wr-nav-btn:hover{color:var(--text)}
+.wr-nav-btn.active{color:var(--techblue);border-bottom-color:var(--techblue)}
+.wr-page{max-width:1400px;margin:0 auto;padding:24px 16px 60px}
+.wr-panel{display:none}
+.wr-panel.active{display:block}
+.sec-title{font-size:16px;font-weight:700;color:var(--white);margin-bottom:14px;padding-bottom:8px;
+border-bottom:2px solid var(--techblue);display:inline-block}
+.grid2{display:grid;grid-template-columns:1.2fr 1fr;gap:18px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+.card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:14px}
+.brief-box{border:1px solid var(--techblue);background:rgba(56,189,248,.06);border-radius:12px;padding:18px}
+.brief-title{font-size:13px;font-weight:700;color:var(--techblue);margin-bottom:10px}
+.brief-item{display:flex;gap:8px;font-size:13px;color:var(--text);margin-bottom:8px;line-height:1.5}
+.brief-dot{color:var(--techblue);flex-shrink:0}
+.profile-row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:13px}
+.profile-row:last-child{border-bottom:none}
+.profile-k{color:var(--muted)}
+.profile-v{color:var(--text);font-weight:600;text-align:right;max-width:65%}
+.pain-card{border-left:3px solid var(--orange);background:var(--card2);border-radius:8px;padding:12px 14px;margin-bottom:10px}
+.pain-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:4px}
+.pain-title{font-size:13px;font-weight:700;color:var(--text)}
+.sev-badge{font-size:10px;padding:2px 9px;border-radius:20px;font-weight:700}
+.sev-高{background:rgba(239,68,68,.18);color:var(--red)}
+.sev-中{background:rgba(249,115,22,.18);color:var(--orange)}
+.sev-低{background:rgba(34,197,94,.18);color:var(--green)}
+.pain-desc{font-size:12px;color:var(--muted);line-height:1.5;margin-bottom:4px}
+.pain-ref{font-size:11px;color:var(--steel);font-style:italic}
+.stake-card{background:var(--card2);border-radius:10px;padding:14px;margin-bottom:10px;border:1px solid var(--border)}
+.stake-head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+.avatar{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;flex-shrink:0;color:#fff}
+.av-c{background:linear-gradient(135deg,#22c55e,#15803d)}
+.av-b{background:linear-gradient(135deg,#ef4444,#b91c1c)}
+.av-i{background:linear-gradient(135deg,#38bdf8,#0369a1)}
+.av-d{background:linear-gradient(135deg,#f97316,#c2410c)}
+.av-x{background:linear-gradient(135deg,#64748b,#334155)}
+.stake-name{font-size:14px;font-weight:700;color:var(--text)}
+.stake-ttl{font-size:11px;color:var(--muted)}
+.badge{display:inline-block;padding:2px 10px;border-radius:20px;font-size:11px;font-weight:600;margin-bottom:8px}
+.bC{background:#22c55e;color:#052e16}.bB{background:#ef4444;color:#fff}
+.bI{background:#38bdf8;color:#03202e}.bD{background:#f97316;color:#2b0e00}.bX{background:#64748b;color:#fff}
+.stake-meta{display:flex;gap:16px;margin-bottom:6px}
+.meta-mini{font-size:11px;color:var(--muted)}
+.meta-mini b{color:var(--techblue)}
+.stake-notes{font-size:12px;color:var(--text);line-height:1.5}
+.filter-row{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.filter-btn{font-size:12px;border:1px solid var(--border);background:var(--card2);color:var(--muted);
+padding:6px 14px;border-radius:20px;cursor:pointer;font-weight:600}
+.filter-btn.active{background:var(--techblue);color:#03202e;border-color:var(--techblue)}
+.risk-card{background:var(--card2);border-radius:10px;padding:14px;margin-bottom:10px;border-left:3px solid var(--steel)}
+.risk-card[data-level="高"]{border-left-color:var(--red)}
+.risk-card[data-level="中"]{border-left-color:var(--orange)}
+.risk-card[data-level="低"]{border-left-color:var(--green)}
+.risk-top{display:flex;justify-content:space-between;align-items:center;margin-bottom:6px}
+.risk-name{font-size:13px;font-weight:700;color:var(--text)}
+.risk-cat{font-size:10px;color:var(--muted);margin-bottom:6px}
+.risk-mit{font-size:12px;color:var(--text);line-height:1.5;margin-bottom:4px}
+.risk-ref{font-size:11px;color:var(--steel);font-style:italic}
+.sim-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:20px}
+.strat-tabs,.roi-tabs{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}
+.strat-btn,.roi-btn{flex:1;min-width:140px;background:var(--card2);border:1px solid var(--border);
+color:var(--text);padding:12px 10px;border-radius:10px;cursor:pointer;font-size:13px;font-weight:700;text-align:center}
+.strat-btn.active,.roi-btn.active{background:linear-gradient(135deg,var(--techblue),var(--blue));color:#03202e;border-color:var(--techblue)}
+.strat-panel,.roi-panel{display:none}
+.strat-panel.active,.roi-panel.active{display:block}
+.strat-row{display:flex;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border);font-size:13px;gap:16px}
+.strat-row:last-child{border-bottom:none}
+.strat-k{color:var(--muted);flex-shrink:0;width:110px}
+.strat-v{color:var(--text);line-height:1.5}
+.strat-tag{display:inline-block;font-size:10px;color:var(--steel);margin-top:2px}
+.est-note{font-size:11px;color:var(--steel);font-style:italic;margin-top:10px}
+.deal-pct{font-size:2.2rem;font-weight:800;color:var(--green)}
+.risk-sim-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-top:6px}
+.slider-item{margin-bottom:16px}
+.slider-top{display:flex;justify-content:space-between;font-size:12px;margin-bottom:6px}
+.slider-top b{color:var(--techblue)}
+input[type=range]{width:100%;accent-color:var(--techblue)}
+.risk-out-card{background:var(--card2);border-radius:10px;padding:14px;margin-bottom:10px}
+.risk-out-lbl{font-size:11px;color:var(--muted);margin-bottom:4px}
+.risk-out-val{font-size:20px;font-weight:800}
+.risk-out-val.ok{color:var(--green)}.risk-out-val.mid{color:var(--orange)}.risk-out-val.bad{color:var(--red)}
+.need-list{font-size:12px;color:var(--text);line-height:1.7;margin-top:6px}
+.need-list .need-item{display:none;padding:4px 8px;background:rgba(249,115,22,.08);border-radius:6px;margin-bottom:4px}
+.need-list .need-item.show{display:block}
+.order-list{font-size:12px;color:var(--text);line-height:2}
+.order-list li{margin-left:18px}
+.roi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin-bottom:14px}
+.roi-num-card{background:var(--card2);border-radius:10px;padding:14px;text-align:center}
+.roi-num{font-size:1.4rem;font-weight:800;color:var(--green)}
+.roi-num.pay{color:var(--techblue)}
+.roi-lbl{font-size:11px;color:var(--muted);margin-top:4px}
+.roi-confirm{font-size:12px;color:var(--muted);line-height:1.6}
+.roi-scale-row{display:flex;align-items:center;gap:12px;margin:14px 0;padding:12px;background:var(--card2);border-radius:10px}
+.roi-scale-lbl{font-size:12px;color:var(--muted);white-space:nowrap}
+.roi-scale-val{font-size:13px;font-weight:700;color:var(--techblue);white-space:nowrap}
+.follow-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+.follow-card{background:var(--card2);border-radius:10px;padding:14px}
+.follow-lbl{font-size:11px;color:var(--muted);margin-bottom:6px}
+.follow-val{font-size:13px;font-weight:700;color:var(--text);line-height:1.5}
+.recalc-btn{background:var(--techblue);color:#03202e;border:none;padding:8px 16px;border-radius:8px;
+font-size:12px;font-weight:700;cursor:pointer;margin-bottom:14px}
+.msg-box{background:var(--card2);border-left:3px solid var(--techblue);border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.6}
+.action-item{display:flex;align-items:center;gap:10px;padding:10px 0;border-bottom:1px solid var(--border)}
+.action-item:last-child{border-bottom:none}
+.action-item input{width:16px;height:16px;accent-color:var(--techblue)}
+.action-task{font-size:13px;color:var(--text);flex:1}
+.action-task.done{text-decoration:line-through;color:var(--steel)}
+.action-meta{font-size:11px;color:var(--muted)}
+.ev-card{background:var(--card2);border-radius:10px;margin-bottom:10px;border:1px solid var(--border);overflow:hidden;cursor:pointer}
+.ev-head{display:flex;justify-content:space-between;align-items:center;padding:13px 16px}
+.ev-title{font-size:13px;font-weight:700;color:var(--text)}
+.ev-summary{font-size:12px;color:var(--muted);margin-top:2px}
+.ev-arrow{color:var(--techblue);font-size:14px;transition:transform .2s;flex-shrink:0;margin-left:10px}
+.ev-card.open .ev-arrow{transform:rotate(180deg)}
+.ev-detail{max-height:0;overflow:hidden;transition:max-height .25s ease;padding:0 16px}
+.ev-card.open .ev-detail{max-height:400px;padding:0 16px 14px}
+.ev-detail-txt{font-size:12px;color:var(--text);line-height:1.6;border-top:1px solid var(--border);padding-top:10px}
+.ev-source{font-size:11px;color:var(--steel);font-style:italic;margin-top:6px}
+@media(max-width:1100px){
+  .wr-hero-grid,.kpi-row{grid-template-columns:repeat(2,1fr)}
+  .grid2,.grid3,.risk-sim-grid,.roi-grid,.follow-grid{grid-template-columns:1fr}
+}
+@media(max-width:600px){
+  .wr-hero{padding:36px 14px 28px}
+  .wr-page{padding:16px 10px 40px}
+  .roi-grid{grid-template-columns:1fr 1fr}
+}
+"""
+
+
+def _wr_role_cls(role_type: str):
+    r = (role_type or "").lower()
+    if "champion" in r or "倡導" in r:
+        return "av-c", "bC"
+    if any(x in r for x in ("blocker", "gatekeeper", "阻礙", "把關")):
+        return "av-b", "bB"
+    if "influencer" in r or "影響" in r:
+        return "av-i", "bI"
+    if "decision" in r or "決策" in r:
+        return "av-d", "bD"
+    return "av-x", "bX"
+
+
+def _wr_render_exec_summary(items: list) -> str:
+    items = items or ["（尚無足夠資料產出主管簡報重點）"]
+    return "".join(
+        f'<div class="brief-item"><span class="brief-dot">▸</span><span>{i}</span></div>'
+        for i in items
+    )
+
+
+def _wr_render_profile(p: dict) -> str:
+    p = p or {}
+    rows = [
+        ("產業別", p.get("industry", "—")),
+        ("公司規模", p.get("company_size", "—")),
+        ("目前現況", p.get("current_situation", "—")),
+        ("背景說明", p.get("background", "—")),
+    ]
+    return "".join(
+        f'<div class="profile-row"><span class="profile-k">{k}</span><span class="profile-v">{v}</span></div>'
+        for k, v in rows
+    )
+
+
+def _wr_render_pain_points(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（未識別到明確痛點）</p>'
+    out = []
+    for p in items:
+        sev = p.get("severity", "中")
+        out.append(
+            f'<div class="pain-card"><div class="pain-top">'
+            f'<span class="pain-title">{p.get("title","")}</span>'
+            f'<span class="sev-badge sev-{sev}">{sev}風險</span></div>'
+            f'<div class="pain-desc">{p.get("description","")}</div>'
+            f'<div class="pain-ref">依據：{p.get("evidence_ref","—")}</div></div>'
+        )
+    return "".join(out)
+
+
+def _wr_render_decision_chain(items: list) -> str:
+    if not items:
+        return '<div class="stake-card"><p style="color:var(--muted)">（未識別到明確決策鏈成員）</p></div>'
+    out = []
+    for s in items:
+        av, bv = _wr_role_cls(s.get("role_type", ""))
+        out.append(
+            f'<div class="stake-card"><div class="stake-head">'
+            f'<div class="avatar {av}">{(s.get("name") or "?")[:1]}</div>'
+            f'<div><div class="stake-name">{s.get("name","")}</div>'
+            f'<div class="stake-ttl">{s.get("title","")}</div></div></div>'
+            f'<span class="badge {bv}">{s.get("role_label", s.get("role_type",""))}</span>'
+            f'<div class="stake-meta">'
+            f'<span class="meta-mini">影響力 <b>{s.get("influence",5)}/10</b></span>'
+            f'<span class="meta-mini">支持度 <b>{s.get("support_level",5)}/10</b></span></div>'
+            f'<div class="stake-notes">{s.get("notes","")}</div></div>'
+        )
+    return "".join(out)
+
+
+def _wr_render_risk_map(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（未識別到明確風險）</p>'
+    out = []
+    for r in items:
+        lvl = r.get("level", "中")
+        out.append(
+            f'<div class="risk-card" data-level="{lvl}">'
+            f'<div class="risk-top"><span class="risk-name">{r.get("risk","")}</span>'
+            f'<span class="sev-badge sev-{lvl}">{lvl}</span></div>'
+            f'<div class="risk-cat">類別：{r.get("category","—")}</div>'
+            f'<div class="risk-mit">緩解措施：{r.get("mitigation","—")}</div>'
+            f'<div class="risk-ref">依據：{r.get("evidence_ref","—")}</div></div>'
+        )
+    return "".join(out)
+
+
+def _wr_render_strategies(modes: dict) -> str:
+    modes = modes or {}
+    order = [("conservative", "保守試點型"), ("fast", "快速導入型"), ("executive", "主管決策型")]
+    btns, panels = [], []
+    for i, (key, default_title) in enumerate(order):
+        m = modes.get(key, {})
+        active = " active" if i == 0 else ""
+        btns.append(
+            f'<button class="strat-btn{active}" data-strat="{key}">{m.get("title", default_title)}</button>'
+        )
+        panels.append(
+            f'<div class="strat-panel{active}" data-strat-panel="{key}">'
+            f'<div class="deal-pct">{m.get("deal_chance", 50)}%</div>'
+            f'<div class="strat-tag">預估成交機會（策略推估）</div>'
+            f'<div class="strat-row"><span class="strat-k">適合情境</span><span class="strat-v">{m.get("fit_scenario","—")}</span></div>'
+            f'<div class="strat-row"><span class="strat-k">主要風險</span><span class="strat-v">{m.get("main_risk","—")}</span></div>'
+            f'<div class="strat-row"><span class="strat-k">建議話術</span><span class="strat-v">{m.get("talk_track","—")}</span></div>'
+            f'<div class="strat-row"><span class="strat-k">下一步行動</span><span class="strat-v">{m.get("next_action","—")}</span></div>'
+            f'<div class="est-note">＊以上為策略推估，依現有資料與風險判斷估算</div></div>'
+        )
+    return "".join(btns), "".join(panels)
+
+
+def _wr_render_risk_factors(factors: list) -> str:
+    if not factors:
+        factors = [
+            {"id": "price", "label": "價格敏感度", "default": 50, "inverse": False, "data_needed_if_high": "需補充：客戶預算上限與比價對象"},
+            {"id": "downtime", "label": "停線風險", "default": 40, "inverse": False, "data_needed_if_high": "需補充：可容忍停機時間"},
+            {"id": "complexity", "label": "導入麻煩程度", "default": 45, "inverse": False, "data_needed_if_high": "需補充：現有系統整合細節"},
+            {"id": "support", "label": "決策者支持度", "default": 55, "inverse": True, "data_needed_if_high": "需補充：決策者關切重點"},
+            {"id": "resistance", "label": "現場人員排斥程度", "default": 40, "inverse": False, "data_needed_if_high": "需補充：現場人員教育訓練規劃"},
+        ]
+    sliders, needs = [], []
+    for f in factors:
+        sliders.append(
+            f'<div class="slider-item">'
+            f'<div class="slider-top"><span>{f.get("label","")}</span><b class="slider-val" data-val-for="{f.get("id","")}">{f.get("default",50)}</b></div>'
+            f'<input type="range" min="0" max="100" value="{f.get("default",50)}" '
+            f'class="risk-slider" data-id="{f.get("id","")}" data-inverse="{"1" if f.get("inverse") else "0"}" '
+            f'data-label="{f.get("label","")}"></div>'
+        )
+        needs.append(
+            f'<div class="need-item" id="need-{f.get("id","")}">⚠ {f.get("data_needed_if_high","")}</div>'
+        )
+    return "".join(sliders), "".join(needs)
+
+
+def _wr_render_roi(scenarios: dict) -> str:
+    scenarios = scenarios or {}
+    order = [("conservative", "保守效益"), ("normal", "一般效益"), ("aggressive", "積極效益")]
+    btns, panels = [], []
+    for i, (key, default_title) in enumerate(order):
+        s = scenarios.get(key, {})
+        active = " active" if i == 0 else ""
+        btns.append(f'<button class="roi-btn{active}" data-roi="{key}">{default_title}</button>')
+        confirm = "".join(f"<li>{c}</li>" for c in s.get("need_confirm", [])) or "<li>—</li>"
+        panels.append(
+            f'<div class="roi-panel{active}" data-roi-panel="{key}">'
+            f'<div class="roi-grid">'
+            f'<div class="roi-num-card"><div class="roi-num roi-cost" data-base="{s.get("cost_saving",0)}">{s.get("cost_saving",0)}萬</div><div class="roi-lbl">可能節省成本／年</div></div>'
+            f'<div class="roi-num-card"><div class="roi-num roi-quality" data-base="{s.get("quality_value",0)}">{s.get("quality_value",0)}萬</div><div class="roi-lbl">品質改善價值</div></div>'
+            f'<div class="roi-num-card"><div class="roi-num roi-complaint" data-base="{s.get("complaint_value",0)}">{s.get("complaint_value",0)}萬</div><div class="roi-lbl">客訴下降價值</div></div>'
+            f'<div class="roi-num-card"><div class="roi-num pay roi-payback" data-base="{s.get("payback_months",12)}">{s.get("payback_months",12)}個月</div><div class="roi-lbl">回收期估算</div></div>'
+            f'</div><div class="roi-confirm"><b style="color:var(--muted)">需要確認的數字：</b><ul style="margin-left:16px">{confirm}</ul></div>'
+            f'<div class="est-note">＊以上為策略推估，實際效益依客戶場域驗證為準</div></div>'
+        )
+    return "".join(btns), "".join(panels)
+
+
+def _wr_render_action_items(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（尚無行動項目）</p>'
+    out = []
+    for a in items:
+        out.append(
+            f'<div class="action-item"><input type="checkbox" class="action-check">'
+            f'<span class="action-task">{a.get("task","")}</span>'
+            f'<span class="action-meta">{a.get("owner","")}｜{a.get("due","")}</span></div>'
+        )
+    return "".join(out)
+
+
+def _wr_render_evidence(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（尚無證據資料）</p>'
+    out = []
+    for e in items:
+        out.append(
+            f'<div class="ev-card"><div class="ev-head">'
+            f'<div><div class="ev-title">{e.get("title","")}</div>'
+            f'<div class="ev-summary">{e.get("summary","")}</div></div>'
+            f'<span class="ev-arrow">▾</span></div>'
+            f'<div class="ev-detail"><div class="ev-detail-txt">{e.get("detail","")}'
+            f'<div class="ev-source">來源：{e.get("source","—")}</div></div></div></div>'
+        )
+    return "".join(out)
+
+
+def _extract_wr_dashboard_json(analysis: str) -> dict:
+    import json as _j
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _WR_EXTRACT_SYSTEM},
+                {"role": "user", "content": _WR_EXTRACT_PROMPT.format(analysis=analysis[:12000])},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=3000,
+            temperature=0,
+        )
+        return _j.loads(resp.choices[0].message.content)
+    except Exception:
+        return {}
+
+
+def _render_wr_dashboard_html(data: dict) -> str:
+    import json as _j
+    hero = data.get("hero", {})
+    kpi = data.get("kpi", {})
+    client_name = hero.get("client_name", "目標客戶")
+    industry_title = hero.get("industry_title", "業務提案戰情室")
+    decision_stage = hero.get("decision_stage", "評估中")
+    data_source = data.get("data_source", "業務分析資料")
+    est_value = data.get("est_value", "Medium（一般客戶）")
+
+    dims = data.get("radar_dimensions", ["價格接受度", "時程壓力", "技術整合度", "決策層支持", "現場配合度"])
+    r_opp = data.get("radar_opportunity", [6, 6, 6, 6, 6])
+    r_res = data.get("radar_resistance", [5, 5, 5, 5, 5])
+    n = max(len(dims), len(r_opp), len(r_res))
+    dims = (dims + ["—"] * n)[:n]
+    r_opp = (r_opp + [5] * n)[:n]
+    r_res = (r_res + [5] * n)[:n]
+
+    exec_html = _wr_render_exec_summary(data.get("exec_summary", []))
+    profile_html = _wr_render_profile(data.get("customer_profile", {}))
+    pain_html = _wr_render_pain_points(data.get("pain_points", []))
+    chain_html = _wr_render_decision_chain(data.get("decision_chain", []))
+    risk_html = _wr_render_risk_map(data.get("risk_map", []))
+    strat_btns, strat_panels = _wr_render_strategies(data.get("strategy_modes", {}))
+    slider_html, need_html = _wr_render_risk_factors(data.get("risk_factors", []))
+    roi_btns, roi_panels = _wr_render_roi(data.get("roi_scenarios", {}))
+    action_html = _wr_render_action_items(data.get("action_items", []))
+    evidence_html = _wr_render_evidence(data.get("evidence", []))
+
+    fu = data.get("follow_up", {})
+
+    tabs = [
+        ("overview", "戰情總覽"), ("profile", "客戶輪廓"), ("pain", "需求痛點"),
+        ("chain", "決策鏈"), ("risk", "風險地圖"), ("strategy", "策略模擬"),
+        ("roi", "ROI情境"), ("action", "行動追蹤"), ("evidence", "證據資料"),
+    ]
+    nav_html = "".join(
+        f'<button class="wr-nav-btn{" active" if i==0 else ""}" data-tab="{k}">{label}</button>'
+        for i, (k, label) in enumerate(tabs)
+    )
+
+    parts = [
+        "<!DOCTYPE html>", "<html lang='zh-TW'>", "<head>",
+        '<meta charset="UTF-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        "<title>業務提案戰情室</title>",
+        '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700'
+        '&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">',
+        '<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>',
+        f"<style>{_WR_CSS}</style>", "</head>", "<body>",
+        # ── Hero ──
+        '<section class="wr-hero"><div class="wr-hero-inner">',
+        '<span class="wr-tag">War Room ｜ 業務提案戰情室</span>',
+        f'<div class="wr-title">{industry_title}｜{client_name}</div>',
+        f'<div class="wr-sub">目前決策階段：{decision_stage}　｜　基於「{data_source}」之戰情分析　｜　案子評級：{est_value}</div>',
+        '<div class="wr-hero-grid">',
+        f'<div class="hero-card opp"><div class="lbl">主要成交機會</div><div class="val">{hero.get("main_opportunity","—")}</div></div>',
+        f'<div class="hero-card risk"><div class="lbl">最大風險</div><div class="val">{hero.get("top_risk","—")}</div></div>',
+        f'<div class="hero-card"><div class="lbl">下一步建議</div><div class="val">{hero.get("next_step","—")}</div></div>',
+        f'<div class="hero-card"><div class="lbl">決策階段</div><div class="val">{decision_stage}</div></div>',
+        '</div>',
+        '<div class="kpi-row">',
+        f'<div class="kpi-card opp"><div class="kpi-num">{kpi.get("deal_score",50)}</div><div class="kpi-lbl">成交機會分數</div></div>',
+        f'<div class="kpi-card risk"><div class="kpi-num">{kpi.get("risk_score",50)}</div><div class="kpi-lbl">風險等級分數</div></div>',
+        f'<div class="kpi-card"><div class="kpi-num">{kpi.get("readiness_score",50)}</div><div class="kpi-lbl">導入準備度</div></div>',
+        f'<div class="kpi-card"><div class="kpi-num">{kpi.get("roi_potential",50)}</div><div class="kpi-lbl">ROI 潛力分數</div></div>',
+        '</div></div></section>',
+        # ── Tabs nav ──
+        f'<nav class="wr-nav">{nav_html}</nav>',
+        '<div class="wr-page">',
+        # 戰情總覽
+        '<div class="wr-panel active" data-panel="overview"><div class="grid2">',
+        '<div><div class="sec-title">成交機會雷達</div><div class="card">'
+        '<div style="position:relative;height:280px"><canvas id="radarChart"></canvas></div></div></div>',
+        f'<div><div class="sec-title">主管簡報重點</div><div class="brief-box">{exec_html}</div></div>',
+        '</div></div>',
+        # 客戶輪廓
+        f'<div class="wr-panel" data-panel="profile"><div class="sec-title">客戶輪廓</div><div class="card">{profile_html}</div></div>',
+        # 需求痛點
+        f'<div class="wr-panel" data-panel="pain"><div class="sec-title">需求痛點</div>{pain_html}</div>',
+        # 決策鏈
+        f'<div class="wr-panel" data-panel="chain"><div class="sec-title">決策鏈分析</div>{chain_html}</div>',
+        # 風險地圖
+        '<div class="wr-panel" data-panel="risk">',
+        '<div class="sec-title">風險與阻力地圖</div>',
+        '<div class="filter-row">'
+        '<button class="filter-btn active" data-filter="全部">全部</button>'
+        '<button class="filter-btn" data-filter="高">高風險</button>'
+        '<button class="filter-btn" data-filter="中">中風險</button>'
+        '<button class="filter-btn" data-filter="低">低風險</button></div>',
+        f'<div id="risk-cards">{risk_html}</div>',
+        '<div class="sec-title" style="margin-top:22px">風險調整模擬</div>',
+        '<div class="sim-card"><div class="risk-sim-grid">',
+        f'<div>{slider_html}</div>',
+        '<div>'
+        '<div class="risk-out-card"><div class="risk-out-lbl">風險等級變化（策略推估）</div>'
+        '<div class="risk-out-val" id="risk-out-level">中</div></div>'
+        '<div class="risk-out-card"><div class="risk-out-lbl">成交阻力變化（策略推估）</div>'
+        '<div class="risk-out-val" id="risk-out-resist">中</div></div>'
+        '<div class="risk-out-card"><div class="risk-out-lbl">需要補強的資料</div>'
+        f'<div class="need-list" id="need-list">{need_html}</div></div>'
+        '<div class="risk-out-card"><div class="risk-out-lbl">建議處理順序</div>'
+        '<ol class="order-list" id="order-list"></ol></div>'
+        '</div></div></div></div>',
+        # 策略模擬
+        '<div class="wr-panel" data-panel="strategy">',
+        '<div class="sec-title">提案策略模擬</div>',
+        '<div class="sim-card">',
+        f'<div class="strat-tabs">{strat_btns}</div>',
+        f'{strat_panels}',
+        '</div></div>',
+        # ROI情境
+        '<div class="wr-panel" data-panel="roi">',
+        '<div class="sec-title">ROI 與導入效益估算</div>',
+        '<div class="sim-card">',
+        f'<div class="roi-tabs">{roi_btns}</div>',
+        '<div class="roi-scale-row"><span class="roi-scale-lbl">導入規模調整</span>'
+        '<input type="range" id="roi-scale" min="50" max="150" value="100" style="flex:1">'
+        '<span class="roi-scale-val" id="roi-scale-val">100%</span></div>',
+        f'{roi_panels}',
+        '</div></div>',
+        # 行動追蹤
+        '<div class="wr-panel" data-panel="action">',
+        '<div class="sec-title">追蹤優先順序模擬</div>',
+        '<button class="recalc-btn" id="recalc-btn">🔄 依目前風險重新試算</button>',
+        '<div class="follow-grid">',
+        f'<div class="follow-card"><div class="follow-lbl">最該先補的資料</div><div class="follow-val" id="fu-data">{fu.get("top_data_needed","—")}</div></div>',
+        f'<div class="follow-card"><div class="follow-lbl">最該先說服的角色</div><div class="follow-val" id="fu-person">{fu.get("top_person","—")}</div></div>',
+        f'<div class="follow-card"><div class="follow-lbl">最適合的追蹤時間</div><div class="follow-val">{fu.get("best_timing","—")}</div></div>',
+        '<div class="follow-card"><div class="follow-lbl">最合適的下一封訊息</div>'
+        f'<div class="msg-box">{fu.get("next_message","—")}</div></div>',
+        '</div>',
+        '<div class="sec-title" style="margin-top:10px">行動項目清單</div>',
+        f'<div class="card">{action_html}</div>',
+        '</div>',
+        # 證據資料
+        f'<div class="wr-panel" data-panel="evidence"><div class="sec-title">資料證據區</div>{evidence_html}</div>',
+        '</div>',  # end wr-page
+        # ── JS ──
+        "<script>",
+        # tab switching
+        "document.querySelectorAll('.wr-nav-btn').forEach(function(btn){",
+        "btn.addEventListener('click',function(){",
+        "document.querySelectorAll('.wr-nav-btn').forEach(function(b){b.classList.remove('active')});",
+        "document.querySelectorAll('.wr-panel').forEach(function(p){p.classList.remove('active')});",
+        "btn.classList.add('active');",
+        "document.querySelector('.wr-panel[data-panel=\"'+btn.dataset.tab+'\"]').classList.add('active');",
+        "window.scrollTo({top:0,behavior:'smooth'});});});",
+        # risk level filter
+        "document.querySelectorAll('.filter-btn').forEach(function(btn){",
+        "btn.addEventListener('click',function(){",
+        "document.querySelectorAll('.filter-btn').forEach(function(b){b.classList.remove('active')});",
+        "btn.classList.add('active');",
+        "var f=btn.dataset.filter;",
+        "document.querySelectorAll('#risk-cards .risk-card').forEach(function(c){",
+        "c.style.display=(f==='全部'||c.dataset.level===f)?'':'none';});});});",
+        # evidence expand
+        "document.querySelectorAll('.ev-card').forEach(function(c){",
+        "c.querySelector('.ev-head').addEventListener('click',function(){c.classList.toggle('open');});});",
+        # strategy switch
+        "document.querySelectorAll('.strat-btn').forEach(function(btn){",
+        "btn.addEventListener('click',function(){",
+        "document.querySelectorAll('.strat-btn').forEach(function(b){b.classList.remove('active')});",
+        "document.querySelectorAll('.strat-panel').forEach(function(p){p.classList.remove('active')});",
+        "btn.classList.add('active');",
+        "document.querySelector('.strat-panel[data-strat-panel=\"'+btn.dataset.strat+'\"]').classList.add('active');});});",
+        # roi switch + scale
+        "document.querySelectorAll('.roi-btn').forEach(function(btn){",
+        "btn.addEventListener('click',function(){",
+        "document.querySelectorAll('.roi-btn').forEach(function(b){b.classList.remove('active')});",
+        "document.querySelectorAll('.roi-panel').forEach(function(p){p.classList.remove('active')});",
+        "btn.classList.add('active');",
+        "document.querySelector('.roi-panel[data-roi-panel=\"'+btn.dataset.roi+'\"]').classList.add('active');});});",
+        "function fmtWan(v){return (Math.round(v*10)/10)+'萬';}",
+        "function applyRoiScale(){",
+        "var scale=parseInt(document.getElementById('roi-scale').value)/100;",
+        "document.getElementById('roi-scale-val').textContent=Math.round(scale*100)+'%';",
+        "document.querySelectorAll('.roi-cost,.roi-quality,.roi-complaint').forEach(function(el){",
+        "var base=parseFloat(el.dataset.base||0);el.textContent=fmtWan(base*scale);});",
+        "document.querySelectorAll('.roi-payback').forEach(function(el){",
+        "var base=parseFloat(el.dataset.base||12);",
+        "var val=scale>0?(base/scale):base;el.textContent=(Math.round(val*10)/10)+'個月';});}",
+        "document.getElementById('roi-scale').addEventListener('input',applyRoiScale);",
+        # risk sliders simulation
+        "function recomputeRisk(){",
+        "var total=0,n=0,resistTotal=0,resistN=0,contribs=[];",
+        "document.querySelectorAll('.risk-slider').forEach(function(s){",
+        "var v=parseInt(s.value);var inv=s.dataset.inverse==='1';",
+        "var contrib=inv?(100-v):v;",
+        "document.querySelector('.slider-val[data-val-for=\"'+s.dataset.id+'\"]').textContent=v;",
+        "total+=contrib;n++;",
+        "if(['price','complexity','resistance'].indexOf(s.dataset.id)>-1){resistTotal+=contrib;resistN++;}",
+        "contribs.push({id:s.dataset.id,label:s.dataset.label,contrib:contrib});",
+        "var need=document.getElementById('need-'+s.dataset.id);",
+        "if(need){need.classList.toggle('show',contrib>=60);}});",
+        "var riskAvg=n?Math.round(total/n):50;",
+        "var resistAvg=resistN?Math.round(resistTotal/resistN):riskAvg;",
+        "function lvl(v){return v>=67?'高':(v>=34?'中':'低');}",
+        "function cls(v){return v>=67?'bad':(v>=34?'mid':'ok');}",
+        "var lv=document.getElementById('risk-out-level');",
+        "lv.textContent=lvl(riskAvg)+'（'+riskAvg+'分）';lv.className='risk-out-val '+cls(riskAvg);",
+        "var rv=document.getElementById('risk-out-resist');",
+        "rv.textContent=lvl(resistAvg)+'（'+resistAvg+'分）';rv.className='risk-out-val '+cls(resistAvg);",
+        "contribs.sort(function(a,b){return b.contrib-a.contrib;});",
+        "var ol=document.getElementById('order-list');",
+        "ol.innerHTML=contribs.map(function(c){return '<li>'+c.label+'（'+c.contrib+'分）</li>';}).join('');",
+        "return contribs;}",
+        "document.querySelectorAll('.risk-slider').forEach(function(s){s.addEventListener('input',recomputeRisk);});",
+        # follow-up recalc
+        "document.getElementById('recalc-btn').addEventListener('click',function(){",
+        "var contribs=recomputeRisk();",
+        "if(contribs&&contribs.length){document.getElementById('fu-data').textContent=",
+        "document.getElementById('need-'+contribs[0].id)?document.getElementById('need-'+contribs[0].id).textContent.replace('⚠ ',''):contribs[0].label;}",
+        f"var chain={_j.dumps(data.get('decision_chain', []), ensure_ascii=False)};",
+        "if(chain&&chain.length){",
+        "chain.sort(function(a,b){return (a.support_level||5)-(b.support_level||5)||(b.influence||5)-(a.influence||5);});",
+        "document.getElementById('fu-person').textContent=chain[0].name+'／'+chain[0].title;}});",
+        # action item checkbox toggle
+        "document.querySelectorAll('.action-check').forEach(function(cb){",
+        "cb.addEventListener('change',function(){",
+        "cb.closest('.action-item').querySelector('.action-task').classList.toggle('done',cb.checked);});});",
+        "recomputeRisk();applyRoiScale();",
+        # radar chart
+        f"var dims={_j.dumps(dims, ensure_ascii=False)};",
+        f"var opp={_j.dumps(r_opp)};",
+        f"var res={_j.dumps(r_res)};",
+        "new Chart(document.getElementById('radarChart'),{type:'radar',",
+        "data:{labels:dims,datasets:[",
+        "{label:'成交機會強度',data:opp,borderColor:'#22c55e',",
+        "backgroundColor:'rgba(34,197,94,.15)',pointBackgroundColor:'#22c55e',borderWidth:2},",
+        "{label:'阻力強度',data:res,borderColor:'#f97316',",
+        "backgroundColor:'rgba(249,115,22,.1)',pointBackgroundColor:'#f97316',borderWidth:2}]},",
+        "options:{responsive:true,maintainAspectRatio:false,",
+        "plugins:{legend:{labels:{color:'#93a2b8',font:{size:11}}}},",
+        "scales:{r:{angleLines:{color:'rgba(255,255,255,.1)'},grid:{color:'rgba(255,255,255,.1)'},",
+        "pointLabels:{color:'#e6edf3',font:{size:11}},ticks:{display:false},min:0,max:10}}}});",
+        "</script>",
+        "</body></html>",
+    ]
+    return "\n".join(parts)
+
+
+def generate_data_dashboard_html(analysis_content: str):
+    if not analysis_content or "逐章節分析中" in analysis_content or analysis_content.startswith("*上傳"):
+        return None
+    data = _extract_wr_dashboard_json(analysis_content)
+    html_content = _render_wr_dashboard_html(data)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+    return tmp.name
+
+
+def docx_to_wr_dashboard_html(file_obj):
+    """Extract text from a .docx file and render it as an interactive 業務提案戰情室 HTML dashboard."""
+    if file_obj is None:
+        return None
+    from docx import Document as _DocxDocument
+    doc = _DocxDocument(file_obj.name)
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                paragraphs.append(" | ".join(cells))
+    text = "\n".join(paragraphs)
+    if not text.strip():
+        return None
+    data = _extract_wr_dashboard_json(text)
+    html_content = _render_wr_dashboard_html(data)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+    return tmp.name
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2094,6 +3065,108 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda f: (docx_to_dashboard_html(f), gr.update(visible=True)),
             inputs=[word_direct_upload],
             outputs=[word_convert_download, word_convert_download],
+        )
+
+    # ── Tab 5 ──────────────────────────────────────────────────────────────────
+    with gr.Tab("📈 數據分析Agent"):
+        gr.Markdown(
+            "# 數據分析Agent\n"
+            "上傳客戶資料、報表、會議紀錄或任何附件，以 **Plan-Execute** 架構建立**業務提案戰情室分析報告**，"
+            "並可生成精緻攝影商業戰情室風格的**互動式 HTML 儀表板**"
+            "（含客戶狀態、成交機會雷達、風險地圖、決策鏈、策略模擬、ROI 情境與追蹤行動），協助業務即時判斷推進方式。"
+        )
+
+        with gr.Accordion("📂 上傳附件（可選取多個檔案）", open=True):
+            gr.Markdown(
+                "支援格式：**PDF、Word (.docx)、PowerPoint (.pptx)、"
+                "Excel (.xlsx/.csv)、純文字 (.txt/.md/.json)、"
+                "圖表圖片 (.png/.jpg/.jpeg/.gif/.webp/.svg)**"
+            )
+            file_upload5 = gr.File(
+                label="拖曳或點擊上傳（可選取多個檔案）",
+                file_types=[
+                    ".pdf", ".docx", ".pptx", ".xlsx", ".xls", ".csv",
+                    ".txt", ".md", ".json",
+                    ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg",
+                ],
+                file_count="multiple",
+            )
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                data_context = gr.Textbox(
+                    label="補充背景資訊（選填）",
+                    placeholder=(
+                        "可輸入任何補充資訊，例如：\n"
+                        "・客戶名稱與產業\n"
+                        "・我方產品／服務說明\n"
+                        "・目前決策階段與進度\n"
+                        "・已知的決策鏈成員\n"
+                        "・希望達成的目標"
+                    ),
+                    lines=8,
+                )
+                user_prompt5 = gr.Textbox(
+                    label="使用者提示（選填）",
+                    placeholder="可輸入額外指示，例如：聚焦風險地圖、加強 ROI 情境、精簡版輸出……",
+                    lines=3,
+                )
+                data_btn = gr.Button("🔍 開始戰情分析", variant="primary", size="lg")
+                data_clear_btn = gr.Button("清除", size="lg")
+
+            with gr.Column(scale=2):
+                data_output = gr.Markdown(
+                    label="業務提案戰情室分析報告",
+                    value="*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+                )
+                with gr.Row():
+                    data_word_btn = gr.Button("📄 下載分析報告 Word", size="lg")
+                with gr.Row():
+                    data_download_word = gr.File(
+                        label="Word 分析報告", visible=False, interactive=False
+                    )
+
+                gr.Markdown("---")
+                gr.Markdown("### 📄 Word 直轉互動儀表板")
+                gr.Markdown(
+                    "上傳現有 Word 報告（.docx），直接轉換為互動 HTML 戰情室儀表板，"
+                    "**無需重新分析**，速度更快。"
+                )
+                with gr.Row():
+                    word_direct_upload5 = gr.File(
+                        label="上傳 Word 檔案 (.docx)",
+                        file_types=[".docx"],
+                        file_count="single",
+                        scale=2,
+                    )
+                    word_convert_btn5 = gr.Button(
+                        "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
+                    )
+                word_convert_download5 = gr.File(
+                    label="轉換後的互動 HTML 戰情室儀表板", visible=False, interactive=False
+                )
+
+        data_btn.click(
+            fn=run_data_analysis,
+            inputs=[file_upload5, data_context, user_prompt5],
+            outputs=[data_output],
+        )
+        data_clear_btn.click(
+            fn=lambda: (None, "", "",
+                        "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
+                        gr.update(visible=False)),
+            outputs=[file_upload5, data_context, user_prompt5, data_output,
+                     data_download_word],
+        )
+        data_word_btn.click(
+            fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
+            inputs=[data_output],
+            outputs=[data_download_word, data_download_word],
+        )
+        word_convert_btn5.click(
+            fn=lambda f: (docx_to_wr_dashboard_html(f), gr.update(visible=True)),
+            inputs=[word_direct_upload5],
+            outputs=[word_convert_download5, word_convert_download5],
         )
 
 if __name__ == "__main__":
