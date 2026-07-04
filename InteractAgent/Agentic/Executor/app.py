@@ -1391,7 +1391,7 @@ def _extract_dashboard_json(analysis: str) -> dict:
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
-                {"role": "user", "content": _DASH_EXTRACT_PROMPT.format(analysis=analysis[:10000])},
+                {"role": "user", "content": _DASH_EXTRACT_PROMPT.replace("{analysis}", analysis[:10000])},
             ],
             response_format={"type": "json_object"},
             max_tokens=2000,
@@ -1908,9 +1908,14 @@ def run_data_analysis(file_list, user_context: str, user_prompt: str = ""):
 
 # ── Tab 5 HTML war-room dashboard: Python-rendered template (responsive) ───
 
-_WR_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。"
+_WR_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。每一個 schema 欄位都必須輸出，不可省略、不可留空陣列。"
 
-_WR_EXTRACT_PROMPT = """\
+# NOTE: extraction is split into two calls (core + tail) on purpose. A single call covering
+# all 18 top-level fields was empirically dropping the fields that are both (a) listed last in
+# the schema and (b) require the most synthesis (radar_*, follow_up, action_items, evidence),
+# even when well under the max_tokens budget and with valid JSON otherwise returned. Splitting
+# gives each half its own dedicated token budget and model attention.
+_WR_EXTRACT_PROMPT_CORE = """\
 請從以下業務提案戰情室分析報告提取資料，輸出 JSON（繁體中文）。
 所有評分一律為「相對評分」，數字不足時請合理估算並不得留空。
 
@@ -1949,9 +1954,6 @@ Schema：
   "risk_map": [
     {"risk": "風險名稱", "level": "高|中|低", "category": "價格|時程|技術|人員|決策", "mitigation": "緩解措施", "evidence_ref": "資料依據"}
   ],
-  "radar_dimensions": ["5個維度名稱，如 價格接受度、時程壓力、技術整合度、決策層支持、現場配合度"],
-  "radar_opportunity": [5個數字 1-10，代表成交機會強度],
-  "radar_resistance": [5個數字 1-10，代表阻力強度],
   "strategy_modes": {
     "conservative": {"title": "保守試點型", "fit_scenario": "適合情境", "deal_chance": 0到100整數, "main_risk": "主要風險", "talk_track": "建議話術，可直接使用的一段話", "next_action": "下一步行動"},
     "fast": {"title": "快速導入型", "fit_scenario": "...", "deal_chance": 0到100整數, "main_risk": "...", "talk_track": "...", "next_action": "..."},
@@ -1968,7 +1970,27 @@ Schema：
     "conservative": {"cost_saving": 數字（萬元/年）, "quality_value": 數字（萬元/年）, "complaint_value": 數字（萬元/年）, "payback_months": 數字, "need_confirm": ["待確認數字1", "待確認數字2"]},
     "normal": {"cost_saving": 數字, "quality_value": 數字, "complaint_value": 數字, "payback_months": 數字, "need_confirm": ["..."]},
     "aggressive": {"cost_saving": 數字, "quality_value": 數字, "complaint_value": 數字, "payback_months": 數字, "need_confirm": ["..."]}
-  },
+  }
+}
+
+只輸出 JSON，不要任何說明。
+
+---
+分析報告：
+{analysis}
+"""
+
+_WR_EXTRACT_PROMPT_TAIL = """\
+請從以下業務提案戰情室分析報告，提取「成交機會雷達」「追蹤優先順序模擬（行動追蹤）」與「資料證據區（證據資料）」三個部分，
+輸出 JSON（繁體中文）。這三個部分即使出現在報告後段、內容較長，也必須完整提取，絕對不可省略或留空。
+若報告中有「行動項目清單」表格，請完整列出每一列到 action_items；若有「證據資料」或「待補資料清單」條列，
+請完整列出每一項到 evidence。
+
+Schema：
+{
+  "radar_dimensions": ["5個維度名稱，如 價格接受度、時程壓力、技術整合度、決策層支持、現場配合度"],
+  "radar_opportunity": [5個數字 1-10，代表成交機會強度],
+  "radar_resistance": [5個數字 1-10，代表阻力強度],
   "follow_up": {
     "top_data_needed": "最該先補的資料",
     "top_person": "最該先說服的角色",
@@ -2347,21 +2369,41 @@ def _wr_render_evidence(items: list) -> str:
 
 
 def _extract_wr_dashboard_json(analysis: str) -> dict:
+    # NOTE: use str.replace() rather than str.format() — the prompts above embed a literal
+    # JSON schema full of unescaped `{`/`}`, which str.format() parses as replacement fields
+    # and always raises KeyError before the API is ever called.
     import json as _j
+    text = analysis[:30000]
+    data: dict = {}
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": _WR_EXTRACT_SYSTEM},
-                {"role": "user", "content": _WR_EXTRACT_PROMPT.format(analysis=analysis[:12000])},
+                {"role": "user", "content": _WR_EXTRACT_PROMPT_CORE.replace("{analysis}", text)},
             ],
             response_format={"type": "json_object"},
             max_tokens=3000,
             temperature=0,
         )
-        return _j.loads(resp.choices[0].message.content)
+        data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
-        return {}
+        pass
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _WR_EXTRACT_SYSTEM},
+                {"role": "user", "content": _WR_EXTRACT_PROMPT_TAIL.replace("{analysis}", text)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=2500,
+            temperature=0,
+        )
+        data.update(_j.loads(resp.choices[0].message.content))
+    except Exception:
+        pass
+    return data
 
 
 def _render_wr_dashboard_html(data: dict) -> str:
