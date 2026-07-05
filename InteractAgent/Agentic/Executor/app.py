@@ -1150,9 +1150,12 @@ SALES_SECTION_FORMATS = {
 
 # ── Tab 4 HTML dashboard: Python-rendered template (responsive) ────────────
 
-_DASH_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。"
+_DASH_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。每一個 schema 欄位都必須輸出，不可省略、不可留空陣列。"
 
-_DASH_EXTRACT_PROMPT = """\
+# NOTE: split into core + tail calls for the same reason as the Tab 5 war-room extractor —
+# a single call covering all fields risked dropping the ones listed last in the schema
+# (radar_*, insights, action_plan), which need the most synthesis from free text.
+_DASH_EXTRACT_PROMPT_CORE = """\
 請從以下業務分析報告提取資料，輸出 JSON（繁體中文）。
 
 Schema：
@@ -1171,9 +1174,6 @@ Schema：
       "deep_fear": "隱性恐懼，1句核心描述"
     }
   ],
-  "radar_dimensions": ["5個維度名稱"],
-  "radar_customer": [5個數字 1-10，代表客戶期望值],
-  "radar_traditional": [5個數字 1-10，傳統方案覆蓋度，通常偏低],
   "key_factor": "關鍵決定因素",
   "top_risk": "最高風險點",
   "strategies": [
@@ -1183,7 +1183,25 @@ Schema：
       "description": "一句說明",
       "boost": 5到20之間的整數
     }
-  ],
+  ]
+}
+
+只輸出 JSON，不要任何說明。
+
+---
+分析報告：
+{analysis}
+"""
+
+_DASH_EXTRACT_PROMPT_TAIL = """\
+請從以下業務分析報告，提取「成交雷達」「隱藏洞察」與「行動計畫」三個部分，輸出 JSON（繁體中文）。
+這三個部分即使出現在報告後段、內容較長，也必須完整提取，絕對不可省略或留空。
+
+Schema：
+{
+  "radar_dimensions": ["5個維度名稱"],
+  "radar_customer": [5個數字 1-10，代表客戶期望值],
+  "radar_traditional": [5個數字 1-10，傳統方案覆蓋度，通常偏低],
   "insights": [{"title": "洞察標題", "description": "1-2句說明"}],
   "action_plan": [
     {"phase": "Week 1", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"}
@@ -1386,20 +1404,37 @@ def _render_timeline(items: list) -> str:
 
 def _extract_dashboard_json(analysis: str) -> dict:
     import json as _j
+    text = analysis[:30000]
+    data: dict = {}
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
             messages=[
                 {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
-                {"role": "user", "content": _DASH_EXTRACT_PROMPT.replace("{analysis}", analysis[:10000])},
+                {"role": "user", "content": _DASH_EXTRACT_PROMPT_CORE.replace("{analysis}", text)},
             ],
             response_format={"type": "json_object"},
             max_tokens=2000,
             temperature=0,
         )
-        return _j.loads(resp.choices[0].message.content)
+        data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
-        return {}
+        pass
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
+                {"role": "user", "content": _DASH_EXTRACT_PROMPT_TAIL.replace("{analysis}", text)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500,
+            temperature=0,
+        )
+        data.update(_j.loads(resp.choices[0].message.content))
+    except Exception:
+        pass
+    return data
 
 
 def _render_dashboard_html(data: dict) -> str:
