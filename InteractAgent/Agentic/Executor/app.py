@@ -1428,10 +1428,12 @@ def _render_timeline(items: list) -> str:
     )
 
 
-def _extract_dashboard_json(analysis: str) -> dict:
+def _extract_dashboard_json(analysis: str, on_step=None) -> dict:
     import json as _j
     text = analysis[:30000]
     data: dict = {}
+    if on_step:
+        on_step(0.15, "分析客戶輪廓、痛點與策略...")
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1446,6 +1448,8 @@ def _extract_dashboard_json(analysis: str) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
+    if on_step:
+        on_step(0.45, "分析成交雷達與隱藏洞察...")
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1460,6 +1464,8 @@ def _extract_dashboard_json(analysis: str) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
+    if on_step:
+        on_step(0.7, "分析精準行動計畫...")
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1474,6 +1480,8 @@ def _extract_dashboard_json(analysis: str) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
+    if on_step:
+        on_step(0.92, "整理資料中...")
     return data
 
 
@@ -1720,10 +1728,12 @@ def generate_sales_dashboard_html(analysis_content: str):
     return tmp.name
 
 
-def docx_to_dashboard_html(file_obj):
+def docx_to_dashboard_html(file_obj, progress=None):
     """Extract text from a .docx file and render it as an interactive HTML dashboard."""
     if file_obj is None:
         return None
+    if progress:
+        progress(0.02, desc="讀取 Word 文件...")
     from docx import Document as _DocxDocument
     doc = _DocxDocument(file_obj.name)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -1736,12 +1746,22 @@ def docx_to_dashboard_html(file_obj):
     text = "\n".join(paragraphs)
     if not text.strip():
         return None
-    data = _extract_dashboard_json(text)
+    on_step = (lambda frac, desc: progress(frac, desc=desc)) if progress else None
+    data = _extract_dashboard_json(text, on_step=on_step)
+    if progress:
+        progress(0.96, desc="產生互動式 HTML 儀表板...")
     html_content = _render_dashboard_html(data)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
     tmp.close()
+    if progress:
+        progress(1.0, desc="完成！")
     return tmp.name
+
+
+def convert_word_to_dashboard_tab4(file_obj, progress=gr.Progress()):
+    path = docx_to_dashboard_html(file_obj, progress=progress)
+    return path, gr.update(visible=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2443,13 +2463,15 @@ def _wr_render_evidence(items: list) -> str:
     return "".join(out)
 
 
-def _extract_wr_dashboard_json(analysis: str) -> dict:
+def _extract_wr_dashboard_json(analysis: str, on_step=None) -> dict:
     # NOTE: use str.replace() rather than str.format() — the prompts above embed a literal
     # JSON schema full of unescaped `{`/`}`, which str.format() parses as replacement fields
     # and always raises KeyError before the API is ever called.
     import json as _j
     text = analysis[:30000]
     data: dict = {}
+    if on_step:
+        on_step(0.15, "分析戰情總覽、客戶輪廓、痛點、決策鏈、風險與策略...")
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -2464,6 +2486,8 @@ def _extract_wr_dashboard_json(analysis: str) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
+    if on_step:
+        on_step(0.6, "分析成交機會雷達、追蹤行動與證據資料...")
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -2478,6 +2502,8 @@ def _extract_wr_dashboard_json(analysis: str) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
+    if on_step:
+        on_step(0.92, "整理資料中...")
     return data
 
 
@@ -2734,10 +2760,12 @@ def generate_data_dashboard_html(analysis_content: str):
     return tmp.name
 
 
-def docx_to_wr_dashboard_html(file_obj):
+def docx_to_wr_dashboard_html(file_obj, progress=None):
     """Extract text from a .docx file and render it as an interactive 業務提案戰情室 HTML dashboard."""
     if file_obj is None:
         return None
+    if progress:
+        progress(0.02, desc="讀取 Word 文件...")
     from docx import Document as _DocxDocument
     doc = _DocxDocument(file_obj.name)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -2749,12 +2777,22 @@ def docx_to_wr_dashboard_html(file_obj):
     text = "\n".join(paragraphs)
     if not text.strip():
         return None
-    data = _extract_wr_dashboard_json(text)
+    on_step = (lambda frac, desc: progress(frac, desc=desc)) if progress else None
+    data = _extract_wr_dashboard_json(text, on_step=on_step)
+    if progress:
+        progress(0.96, desc="產生互動式 HTML 戰情室儀表板...")
     html_content = _render_wr_dashboard_html(data)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
     tmp.close()
+    if progress:
+        progress(1.0, desc="完成！")
     return tmp.name
+
+
+def convert_word_to_dashboard_tab5(file_obj, progress=gr.Progress()):
+    path = docx_to_wr_dashboard_html(file_obj, progress=progress)
+    return path, gr.update(visible=True)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3180,7 +3218,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             outputs=[sales_download_word, sales_download_word],
         )
         word_convert_btn.click(
-            fn=lambda f: (docx_to_dashboard_html(f), gr.update(visible=True)),
+            fn=convert_word_to_dashboard_tab4,
             inputs=[word_direct_upload],
             outputs=[word_convert_download, word_convert_download],
         )
@@ -3283,7 +3321,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             outputs=[data_download_word, data_download_word],
         )
         word_convert_btn5.click(
-            fn=lambda f: (docx_to_wr_dashboard_html(f), gr.update(visible=True)),
+            fn=convert_word_to_dashboard_tab5,
             inputs=[word_direct_upload5],
             outputs=[word_convert_download5, word_convert_download5],
         )
