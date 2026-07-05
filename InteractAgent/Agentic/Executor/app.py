@@ -1194,17 +1194,40 @@ Schema：
 """
 
 _DASH_EXTRACT_PROMPT_TAIL = """\
-請從以下業務分析報告，提取「成交雷達」「隱藏洞察」與「行動計畫」三個部分，輸出 JSON（繁體中文）。
-這三個部分即使出現在報告後段、內容較長，也必須完整提取，絕對不可省略或留空。
+請從以下業務分析報告，提取「成交雷達」與「隱藏洞察」兩個部分，輸出 JSON（繁體中文）。
+這兩個部分即使出現在報告後段、內容較長，也必須完整提取，絕對不可省略或留空。
 
 Schema：
 {
   "radar_dimensions": ["5個維度名稱"],
   "radar_customer": [5個數字 1-10，代表客戶期望值],
   "radar_traditional": [5個數字 1-10，傳統方案覆蓋度，通常偏低],
-  "insights": [{"title": "洞察標題", "description": "1-2句說明"}],
+  "insights": [{"title": "洞察標題", "description": "1-2句說明"}]
+}
+
+只輸出 JSON，不要任何說明。
+
+---
+分析報告：
+{analysis}
+"""
+
+# NOTE: action_plan gets its own dedicated call (not bundled with insights) because insights
+# can run to 6-7 verbose items on its own, and when both shared one call/token budget,
+# action_plan (listed after insights) was observed to collapse down to a single Week-1 phase
+# even though the underlying report clearly described a multi-week/month rollout.
+_DASH_EXTRACT_PROMPT_ACTION = """\
+請從以下業務分析報告，提取完整的「精準行動計畫」時間軸，輸出 JSON（繁體中文）。
+行動計畫必須涵蓋從近期到未來（例如 Week 1、Week 2-4、Month 2、Month 3+ 等分階段），
+只要報告中有對應內容就必須完整列出每一個階段，不可只輸出第一階段就停止。
+
+Schema：
+{
   "action_plan": [
-    {"phase": "Week 1", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"}
+    {"phase": "Week 1", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"},
+    {"phase": "Week 2-4", "tasks": ["任務1", "任務2"], "milestone": "..."},
+    {"phase": "Month 2", "tasks": ["任務1", "任務2"], "milestone": "..."},
+    {"phase": "Month 3+", "tasks": ["任務1", "任務2"], "milestone": "..."}
   ]
 }
 
@@ -1426,6 +1449,20 @@ def _extract_dashboard_json(analysis: str) -> dict:
             messages=[
                 {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
                 {"role": "user", "content": _DASH_EXTRACT_PROMPT_TAIL.replace("{analysis}", text)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=1500,
+            temperature=0,
+        )
+        data.update(_j.loads(resp.choices[0].message.content))
+    except Exception:
+        pass
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _DASH_EXTRACT_SYSTEM},
+                {"role": "user", "content": _DASH_EXTRACT_PROMPT_ACTION.replace("{analysis}", text)},
             ],
             response_format={"type": "json_object"},
             max_tokens=1500,
@@ -3129,9 +3166,10 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         sales_clear_btn.click(
             fn=lambda: (None, "", "",
                         "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(visible=False)),
+                        gr.update(value=None, visible=False),
+                        None, gr.update(value=None, visible=False)),
             outputs=[file_upload4, sales_context, user_prompt4, sales_output,
-                     sales_download_word],
+                     sales_download_word, word_direct_upload, word_convert_download],
         )
         sales_word_btn.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
@@ -3231,9 +3269,10 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         data_clear_btn.click(
             fn=lambda: (None, "", "",
                         "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(visible=False)),
+                        gr.update(value=None, visible=False),
+                        None, gr.update(value=None, visible=False)),
             outputs=[file_upload5, data_context, user_prompt5, data_output,
-                     data_download_word],
+                     data_download_word, word_direct_upload5, word_convert_download5],
         )
         data_word_btn.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
