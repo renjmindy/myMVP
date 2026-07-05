@@ -1179,9 +1179,11 @@ Schema：
   "strategies": [
     {
       "label_type": "主打|加值|商務",
-      "name": "策略名稱",
-      "description": "一句說明",
-      "boost": 5到20之間的整數
+      "name": "策略名稱——請直接沿用報告中「策略模擬與情境分析」章節裡實際命名／描述的策略"
+              "（例如報告寫『策略A：快速成交型』就用『快速成交型』），不要自行發明報告中沒有的策略",
+      "description": "一句說明，盡量納入報告提到的成功機率或風險等級等具體數字",
+      "boost": "5到20之間的整數；若報告有明確指出「最推薦」的策略，該策略排第一個、"
+               "label_type 設為主打並給較高的 boost，其餘依報告的風險等級／優先順序給 label_type 與 boost"
     }
   ]
 }
@@ -1218,16 +1220,16 @@ Schema：
 # even though the underlying report clearly described a multi-week/month rollout.
 _DASH_EXTRACT_PROMPT_ACTION = """\
 請從以下業務分析報告，提取完整的「精準行動計畫」時間軸，輸出 JSON（繁體中文）。
-行動計畫必須涵蓋從近期到未來（例如 Week 1、Week 2-4、Month 2、Month 3+ 等分階段），
-只要報告中有對應內容就必須完整列出每一個階段，不可只輸出第一階段就停止。
+報告中通常會分階段描述（例如本週行動、短期計畫、中期計畫等），有幾個階段就輸出幾個階段——
+只要報告中有對應內容就必須完整列出每一個階段，不可只輸出第一階段就停止；
+但也絕對不可以為了湊階段數而輸出報告中沒有的階段，每個階段都必須有實際的 tasks 或 milestone，
+不可輸出空白或虛構的階段。phase 名稱請盡量沿用報告原文使用的階段名稱（例如報告寫「Month 2-3」
+就用「Month 2-3」，不要拆成兩個階段）。
 
-Schema：
+Schema（以下僅為格式示意，實際階段數與名稱請以報告內容為準）：
 {
   "action_plan": [
-    {"phase": "Week 1", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"},
-    {"phase": "Week 2-4", "tasks": ["任務1", "任務2"], "milestone": "..."},
-    {"phase": "Month 2", "tasks": ["任務1", "任務2"], "milestone": "..."},
-    {"phase": "Month 3+", "tasks": ["任務1", "任務2"], "milestone": "..."}
+    {"phase": "階段名稱（沿用報告原文）", "tasks": ["任務1", "任務2"], "milestone": "里程碑說明"}
   ]
 }
 
@@ -1409,6 +1411,7 @@ def _render_insights(items: list) -> str:
 
 
 def _render_timeline(items: list) -> str:
+    items = [p for p in (items or []) if p.get("tasks") or p.get("milestone")]
     if not items:
         items = [
             {"phase": "Week 1", "tasks": ["初步接觸", "需求確認"], "milestone": "建立信任"},
