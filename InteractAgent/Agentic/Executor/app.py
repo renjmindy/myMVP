@@ -1428,12 +1428,18 @@ def _render_timeline(items: list) -> str:
     )
 
 
-def _extract_dashboard_json(analysis: str, on_step=None) -> dict:
+def _extract_dashboard_json_stream(analysis: str):
+    """Generator: yields (data_so_far, status_message) at each extraction stage.
+
+    Structured as a generator (rather than a plain function with an on_step callback) so the
+    Gradio-facing caller can yield a status update to a visible Markdown component between each
+    OpenAI call — a callback fired from inside a blocking call can't make an outer generator
+    pause and yield, so the calls themselves have to live in the generator.
+    """
     import json as _j
     text = analysis[:30000]
     data: dict = {}
-    if on_step:
-        on_step(0.15, "分析客戶輪廓、痛點與策略...")
+    yield data, "分析客戶輪廓、痛點與策略..."
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1448,8 +1454,7 @@ def _extract_dashboard_json(analysis: str, on_step=None) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
-    if on_step:
-        on_step(0.45, "分析成交雷達與隱藏洞察...")
+    yield data, "分析成交雷達與隱藏洞察..."
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1464,8 +1469,7 @@ def _extract_dashboard_json(analysis: str, on_step=None) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
-    if on_step:
-        on_step(0.7, "分析精準行動計畫...")
+    yield data, "分析精準行動計畫..."
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -1480,8 +1484,13 @@ def _extract_dashboard_json(analysis: str, on_step=None) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
-    if on_step:
-        on_step(0.92, "整理資料中...")
+    yield data, "整理資料中..."
+
+
+def _extract_dashboard_json(analysis: str) -> dict:
+    data: dict = {}
+    for data, _status in _extract_dashboard_json_stream(analysis):
+        pass
     return data
 
 
@@ -1728,12 +1737,13 @@ def generate_sales_dashboard_html(analysis_content: str):
     return tmp.name
 
 
-def docx_to_dashboard_html(file_obj, progress=None):
-    """Extract text from a .docx file and render it as an interactive HTML dashboard."""
+def docx_to_dashboard_html_stream(file_obj):
+    """Generator: yields (html_path_or_None, status_message) while converting a .docx to
+    an interactive HTML dashboard. html_path is only non-None on the final yield."""
     if file_obj is None:
-        return None
-    if progress:
-        progress(0.02, desc="讀取 Word 文件...")
+        yield None, "⚠️ 請先上傳 Word 檔案。"
+        return
+    yield None, "讀取 Word 文件..."
     from docx import Document as _DocxDocument
     doc = _DocxDocument(file_obj.name)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -1745,23 +1755,34 @@ def docx_to_dashboard_html(file_obj, progress=None):
                 paragraphs.append(" | ".join(cells))
     text = "\n".join(paragraphs)
     if not text.strip():
-        return None
-    on_step = (lambda frac, desc: progress(frac, desc=desc)) if progress else None
-    data = _extract_dashboard_json(text, on_step=on_step)
-    if progress:
-        progress(0.96, desc="產生互動式 HTML 儀表板...")
+        yield None, "⚠️ 無法從 Word 檔案讀取到文字內容，請確認檔案格式。"
+        return
+    data = {}
+    for data, status in _extract_dashboard_json_stream(text):
+        yield None, status
+    yield None, "產生互動式 HTML 儀表板..."
     html_content = _render_dashboard_html(data)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
     tmp.close()
-    if progress:
-        progress(1.0, desc="完成！")
-    return tmp.name
+    yield tmp.name, "✅ 完成！"
 
 
-def convert_word_to_dashboard_tab4(file_obj, progress=gr.Progress()):
-    path = docx_to_dashboard_html(file_obj, progress=progress)
-    return path, gr.update(visible=True)
+def docx_to_dashboard_html(file_obj):
+    path = None
+    for path, _status in docx_to_dashboard_html_stream(file_obj):
+        pass
+    return path
+
+
+def convert_word_to_dashboard_tab4(file_obj):
+    for path, status in docx_to_dashboard_html_stream(file_obj):
+        if path:
+            yield gr.update(value=path, visible=True), status
+        elif status.startswith("⚠️"):
+            yield gr.update(visible=False), status
+        else:
+            yield gr.update(visible=False), f"🔄 {status}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2463,15 +2484,22 @@ def _wr_render_evidence(items: list) -> str:
     return "".join(out)
 
 
-def _extract_wr_dashboard_json(analysis: str, on_step=None) -> dict:
-    # NOTE: use str.replace() rather than str.format() — the prompts above embed a literal
-    # JSON schema full of unescaped `{`/`}`, which str.format() parses as replacement fields
-    # and always raises KeyError before the API is ever called.
+def _extract_wr_dashboard_json_stream(analysis: str):
+    """Generator: yields (data_so_far, status_message) at each extraction stage.
+
+    Structured as a generator (rather than a plain function with an on_step callback) so the
+    Gradio-facing caller can yield a status update to a visible Markdown component between each
+    OpenAI call — a callback fired from inside a blocking call can't make an outer generator
+    pause and yield, so the calls themselves have to live in the generator.
+
+    NOTE: use str.replace() rather than str.format() — the prompts above embed a literal
+    JSON schema full of unescaped `{`/`}`, which str.format() parses as replacement fields
+    and always raises KeyError before the API is ever called.
+    """
     import json as _j
     text = analysis[:30000]
     data: dict = {}
-    if on_step:
-        on_step(0.15, "分析戰情總覽、客戶輪廓、痛點、決策鏈、風險與策略...")
+    yield data, "分析戰情總覽、客戶輪廓、痛點、決策鏈、風險與策略..."
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -2486,8 +2514,7 @@ def _extract_wr_dashboard_json(analysis: str, on_step=None) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
-    if on_step:
-        on_step(0.6, "分析成交機會雷達、追蹤行動與證據資料...")
+    yield data, "分析成交機會雷達、追蹤行動與證據資料..."
     try:
         resp = openai_client.chat.completions.create(
             model="gpt-4o",
@@ -2502,8 +2529,13 @@ def _extract_wr_dashboard_json(analysis: str, on_step=None) -> dict:
         data.update(_j.loads(resp.choices[0].message.content))
     except Exception:
         pass
-    if on_step:
-        on_step(0.92, "整理資料中...")
+    yield data, "整理資料中..."
+
+
+def _extract_wr_dashboard_json(analysis: str) -> dict:
+    data: dict = {}
+    for data, _status in _extract_wr_dashboard_json_stream(analysis):
+        pass
     return data
 
 
@@ -2760,12 +2792,13 @@ def generate_data_dashboard_html(analysis_content: str):
     return tmp.name
 
 
-def docx_to_wr_dashboard_html(file_obj, progress=None):
-    """Extract text from a .docx file and render it as an interactive 業務提案戰情室 HTML dashboard."""
+def docx_to_wr_dashboard_html_stream(file_obj):
+    """Generator: yields (html_path_or_None, status_message) while converting a .docx to an
+    interactive 業務提案戰情室 HTML dashboard. html_path is only non-None on the final yield."""
     if file_obj is None:
-        return None
-    if progress:
-        progress(0.02, desc="讀取 Word 文件...")
+        yield None, "⚠️ 請先上傳 Word 檔案。"
+        return
+    yield None, "讀取 Word 文件..."
     from docx import Document as _DocxDocument
     doc = _DocxDocument(file_obj.name)
     paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
@@ -2776,23 +2809,34 @@ def docx_to_wr_dashboard_html(file_obj, progress=None):
                 paragraphs.append(" | ".join(cells))
     text = "\n".join(paragraphs)
     if not text.strip():
-        return None
-    on_step = (lambda frac, desc: progress(frac, desc=desc)) if progress else None
-    data = _extract_wr_dashboard_json(text, on_step=on_step)
-    if progress:
-        progress(0.96, desc="產生互動式 HTML 戰情室儀表板...")
+        yield None, "⚠️ 無法從 Word 檔案讀取到文字內容，請確認檔案格式。"
+        return
+    data = {}
+    for data, status in _extract_wr_dashboard_json_stream(text):
+        yield None, status
+    yield None, "產生互動式 HTML 戰情室儀表板..."
     html_content = _render_wr_dashboard_html(data)
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
     tmp.write(html_content)
     tmp.close()
-    if progress:
-        progress(1.0, desc="完成！")
-    return tmp.name
+    yield tmp.name, "✅ 完成！"
 
 
-def convert_word_to_dashboard_tab5(file_obj, progress=gr.Progress()):
-    path = docx_to_wr_dashboard_html(file_obj, progress=progress)
-    return path, gr.update(visible=True)
+def docx_to_wr_dashboard_html(file_obj):
+    path = None
+    for path, _status in docx_to_wr_dashboard_html_stream(file_obj):
+        pass
+    return path
+
+
+def convert_word_to_dashboard_tab5(file_obj):
+    for path, status in docx_to_wr_dashboard_html_stream(file_obj):
+        if path:
+            yield gr.update(value=path, visible=True), status
+        elif status.startswith("⚠️"):
+            yield gr.update(visible=False), status
+        else:
+            yield gr.update(visible=False), f"🔄 {status}"
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -3195,6 +3239,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                     word_convert_btn = gr.Button(
                         "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
                     )
+                word_convert_status = gr.Markdown(value="", visible=True)
                 word_convert_download = gr.File(
                     label="轉換後的互動 HTML 儀表板", visible=False, interactive=False
                 )
@@ -3208,9 +3253,10 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda: (None, "", "",
                         "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
                         gr.update(value=None, visible=False),
-                        None, gr.update(value=None, visible=False)),
+                        None, gr.update(value=None, visible=False), ""),
             outputs=[file_upload4, sales_context, user_prompt4, sales_output,
-                     sales_download_word, word_direct_upload, word_convert_download],
+                     sales_download_word, word_direct_upload, word_convert_download,
+                     word_convert_status],
         )
         sales_word_btn.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
@@ -3220,7 +3266,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         word_convert_btn.click(
             fn=convert_word_to_dashboard_tab4,
             inputs=[word_direct_upload],
-            outputs=[word_convert_download, word_convert_download],
+            outputs=[word_convert_download, word_convert_status],
         )
 
     # ── Tab 5 ──────────────────────────────────────────────────────────────────
@@ -3298,6 +3344,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                     word_convert_btn5 = gr.Button(
                         "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
                     )
+                word_convert_status5 = gr.Markdown(value="", visible=True)
                 word_convert_download5 = gr.File(
                     label="轉換後的互動 HTML 戰情室儀表板", visible=False, interactive=False
                 )
@@ -3311,9 +3358,10 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=lambda: (None, "", "",
                         "*上傳附件或輸入資料後，Agent 將規劃分析章節並逐一生成，結果即時顯示於此……*",
                         gr.update(value=None, visible=False),
-                        None, gr.update(value=None, visible=False)),
+                        None, gr.update(value=None, visible=False), ""),
             outputs=[file_upload5, data_context, user_prompt5, data_output,
-                     data_download_word, word_direct_upload5, word_convert_download5],
+                     data_download_word, word_direct_upload5, word_convert_download5,
+                     word_convert_status5],
         )
         data_word_btn.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
@@ -3323,8 +3371,8 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         word_convert_btn5.click(
             fn=convert_word_to_dashboard_tab5,
             inputs=[word_direct_upload5],
-            outputs=[word_convert_download5, word_convert_download5],
+            outputs=[word_convert_download5, word_convert_status5],
         )
 
 if __name__ == "__main__":
-    demo.launch(server_name="0.0.0.0", server_port=7860, mcp_server=False, theme=gr.themes.Soft())
+    demo.queue().launch(server_name="0.0.0.0", server_port=7860, mcp_server=False, theme=gr.themes.Soft())
