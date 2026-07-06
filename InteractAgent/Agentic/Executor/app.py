@@ -1,11 +1,14 @@
 import os
 os.environ["GRADIO_MCP_SERVER"] = "false"
 import base64
+import re
 import tempfile
-from typing import List, Tuple, Annotated, TypedDict
+from typing import List, Tuple, Annotated, TypedDict, Optional, Literal
 import operator
 import gradio as gr
 import markdown as md
+import numpy as np
+import pandas as pd
 
 from openai import OpenAI
 from langchain_openai import ChatOpenAI
@@ -13,6 +16,53 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.messages import HumanMessage, SystemMessage
 from pydantic import BaseModel, Field
 from langgraph.graph import END, StateGraph
+
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+import matplotlib.font_manager as fm
+from matplotlib.colors import LinearSegmentedColormap
+
+
+def _register_cjk_font():
+    """Register a CJK-capable font so matplotlib can render Traditional Chinese
+    (the base Docker image has no CJK font installed unless one is bundled)."""
+    try:
+        # Priority matters: some CJK "fallback" fonts (e.g. Droid Sans Fallback) map every
+        # codepoint to a glyph -- including a blank/tofu box for Latin digits/punctuation --
+        # so matplotlib never triggers real fallback to a Latin font for them. Noto Sans CJK
+        # and WenQuanYi Zen Hei render both CJK and Latin correctly, so they must come first.
+        priority = ("NotoSansCJK", "NotoSerifCJK", "wqy-zenhei", "DroidSansFallback")
+        candidates = []
+        search_roots = ("/usr/share/fonts", "/usr/local/share/fonts", os.path.expanduser("~/.fonts"))
+        for root in search_roots:
+            if not os.path.isdir(root):
+                continue
+            for dirpath, _, files in os.walk(root):
+                for fn in files:
+                    for rank, key in enumerate(priority):
+                        if key in fn:
+                            candidates.append((rank, os.path.join(dirpath, fn)))
+                            break
+        candidates.sort(key=lambda t: t[0])
+        family_names = []
+        for _, path in candidates:
+            try:
+                fm.fontManager.addfont(path)
+                family_names.append(fm.FontProperties(fname=path).get_name())
+            except Exception:
+                continue
+        families = family_names + [
+            "Noto Sans CJK TC", "Noto Sans CJK SC", "WenQuanYi Zen Hei", "DejaVu Sans",
+        ]
+        plt.rcParams["font.sans-serif"] = families
+        plt.rcParams["font.family"] = "sans-serif"
+        plt.rcParams["axes.unicode_minus"] = False
+    except Exception:
+        pass
+
+
+_register_cjk_font()
 
 # ── Clients ────────────────────────────────────────────────────────────────────
 _api_key = os.environ.get("OPENAI_API_KEY")
@@ -2840,6 +2890,540 @@ def convert_word_to_dashboard_tab5(file_obj):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+# Tab 6: 數據視覺化大師Agent — CSV/Excel 上傳 → ECharts 風格多維度圖表 (JPG)
+# ══════════════════════════════════════════════════════════════════════════════
+
+DATAVIZ_SYSTEM_PROMPT = (
+    "請扮演大數據大師、參考 https://echarts.apache.org/examples/zh/index.html 的 "
+    "Echarts風格、根據數據的特性，給我幾個圖表呈現的建議、要有高級感。\n"
+    "輸出語言：繁體中文。"
+)
+
+DATAVIZ_USER_INSTRUCTION = (
+    "再製作幾張多維度在同一張且有意義的圖。接著輸出這幾張圖、繁體中文標示、"
+    "要有完整圖例跟座標標示等、jpg檔讓我下載。"
+)
+
+# ── 資料讀取與輪廓分析 ──────────────────────────────────────────────────────────
+
+def dataviz_load_file(file_obj):
+    if file_obj is None:
+        return None, gr.update(choices=[], value=None, visible=False), None, "*請上傳 CSV 或 Excel 檔案。*"
+    path = file_obj.name if hasattr(file_obj, "name") else str(file_obj)
+    ext = os.path.splitext(path)[1].lower()
+    try:
+        if ext == ".csv":
+            df = pd.read_csv(path)
+            sheets = {"CSV資料": df}
+        else:
+            xl = pd.ExcelFile(path)
+            sheets = {s: xl.parse(s) for s in xl.sheet_names}
+    except Exception as e:
+        return None, gr.update(choices=[], value=None, visible=False), None, f"⚠️ 檔案讀取失敗：{e}"
+    first_sheet = list(sheets.keys())[0]
+    df = sheets[first_sheet]
+    status = f"✅ 已載入「{first_sheet}」：{len(df)} 列 × {len(df.columns)} 欄"
+    state = {"sheets": sheets, "current": first_sheet}
+    return (
+        state,
+        gr.update(choices=list(sheets.keys()), value=first_sheet, visible=len(sheets) > 1),
+        df.head(10),
+        status,
+    )
+
+
+def dataviz_switch_sheet(state, sheet_name):
+    if not state or sheet_name not in state.get("sheets", {}):
+        return state, None, "*請選擇有效的工作表。*"
+    state = dict(state)
+    state["current"] = sheet_name
+    df = state["sheets"][sheet_name]
+    status = f"✅ 已載入「{sheet_name}」：{len(df)} 列 × {len(df.columns)} 欄"
+    return state, df.head(10), status
+
+
+def build_data_profile(df: pd.DataFrame, max_cols: int = 40) -> str:
+    lines = [f"資料筆數：{len(df)} 列 × {len(df.columns)} 欄"]
+    lines.append("\n欄位資訊：")
+    for col in list(df.columns)[:max_cols]:
+        s = df[col]
+        n_null = int(s.isna().sum())
+        if pd.api.types.is_numeric_dtype(s):
+            desc = s.describe()
+            lines.append(
+                f"- {col}（數值型，缺失{n_null}）：min={desc.get('min', float('nan')):.2f}, "
+                f"max={desc.get('max', float('nan')):.2f}, mean={desc.get('mean', float('nan')):.2f}"
+            )
+            continue
+        parsed = pd.to_datetime(s, errors="coerce")
+        if len(s.dropna()) and parsed.notna().mean() > 0.8:
+            lines.append(f"- {col}（日期時間型，缺失{n_null}）：範圍 {parsed.min()} ～ {parsed.max()}")
+            continue
+        uniq = s.dropna().unique()
+        top = s.value_counts().head(5)
+        top_str = "、".join(f"{k}({v})" for k, v in top.items())
+        lines.append(f"- {col}（類別/文字型，缺失{n_null}，唯一值{len(uniq)}）：常見值 {top_str}")
+    lines.append("\n前 5 列樣本資料：")
+    lines.append(df.head(5).to_string(index=False))
+    return "\n".join(lines)
+
+
+def run_dataviz_recommend(state, extra_context):
+    if not state or "sheets" not in state:
+        return "*請先上傳 CSV 或 Excel 檔案。*"
+    df = state["sheets"][state["current"]]
+    profile = build_data_profile(df)
+    context_part = f"\n\n補充背景資訊：\n{extra_context.strip()}" if extra_context and extra_context.strip() else ""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DATAVIZ_SYSTEM_PROMPT),
+        ("human",
+         "以下是使用者上傳資料的輪廓分析，請根據數據特性提出圖表呈現建議（列出建議的圖表類型與理由即可，"
+         "不需要輸出程式碼或 JSON）：\n\n{profile}{context}"),
+    ])
+    chain = prompt | llm_4o
+    result = chain.invoke({"profile": profile, "context": context_part})
+    return result.content
+
+
+# ── 圖表規劃 (structured output) ───────────────────────────────────────────────
+
+class SeriesSpec(BaseModel):
+    field: str = Field(description="資料欄位名稱，必須完全對應資料集中既有的欄位名稱")
+    label: str = Field(description="圖例顯示名稱，繁體中文")
+    kind: Literal["bar", "line"] = Field(default="bar", description="此數列繪製型態，僅用於組合圖 (bar_line)")
+    axis: Literal["primary", "secondary"] = Field(default="primary", description="繪製於主座標軸或副座標軸")
+
+
+class SubplotSpec(BaseModel):
+    title: str = Field(description="子圖標題，繁體中文")
+    chart_type: Literal[
+        "bar", "line", "bar_line", "stacked_bar", "stacked_area",
+        "heatmap", "radar", "rose", "bubble", "standardized_line",
+    ] = Field(description="圖表類型")
+    x_field: Optional[str] = Field(default=None, description="X軸／分類軸使用的欄位名稱")
+    group_field: Optional[str] = Field(default=None, description="heatmap 的欄軸欄位，或 radar/rose 的分類欄位")
+    value_field: Optional[str] = Field(default=None, description="heatmap/rose 使用的數值欄位")
+    size_field: Optional[str] = Field(default=None, description="bubble 圖的泡泡大小欄位")
+    color_field: Optional[str] = Field(default=None, description="bubble 圖的顏色編碼欄位（類別或數值欄位）")
+    series: List[SeriesSpec] = Field(default_factory=list, description="此子圖要繪製的數列（欄位）清單")
+    agg: Literal["sum", "mean", "count", "none"] = Field(
+        default="sum", description="依 x_field 分組時的彙總方式；bubble 圖請用 none"
+    )
+    top_n: Optional[int] = Field(default=None, description="僅取彙總後前 N 個類別，未指定則全部顯示")
+    x_label: str = Field(default="", description="X軸座標標示文字")
+    y_label: str = Field(default="", description="主Y軸座標標示文字")
+    y2_label: str = Field(default="", description="副Y軸座標標示文字（若有雙軸）")
+    note: str = Field(default="", description="子圖下方一行洞察說明文字，繁體中文，可留空")
+
+
+class FigureSpec(BaseModel):
+    figure_title: str = Field(description="整張圖的主標題，繁體中文")
+    layout: Literal["1x1", "1x2", "1x3", "2x2", "2+1", "1+2"] = Field(
+        description="子圖排列方式；子圖數量須與排列方式一致（1x1=1格，1x2/1x3=同列數格，2x2/2+1/1+2=3~4格）"
+    )
+    subplots: List[SubplotSpec]
+
+
+class ChartPlan(BaseModel):
+    """多維度圖表產出計畫"""
+    figures: List[FigureSpec] = Field(description="要產出的圖表清單，每個 FigureSpec 會各自輸出成一張 JPG")
+
+
+def generate_chart_plan(df: pd.DataFrame, profile: str, recommendation: str, extra_instruction: str) -> "ChartPlan":
+    columns_desc = "、".join(f"「{c}」" for c in df.columns)
+    extra = f"\n\n使用者額外指示：\n{extra_instruction.strip()}" if extra_instruction and extra_instruction.strip() else ""
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", DATAVIZ_SYSTEM_PROMPT),
+        ("human",
+         "資料欄位僅有以下這些，設計圖表時 field / x_field / group_field / value_field / size_field / "
+         "color_field 名稱必須完全從中挑選，不可自創或翻譯：\n{columns}\n\n"
+         "資料輪廓：\n{profile}\n\n"
+         "你剛才給的圖表建議：\n{recommendation}\n\n"
+         "{instruction}{extra}\n\n"
+         "請設計 2～4 張圖（每張圖對應一個 FigureSpec，會各自輸出一張 JPG），"
+         "每張圖可包含 1～4 個彼此相關、多維度且有意義的子圖組合"
+         "（例如雙軸柱線圖、堆疊面積圖、熱力矩陣、雷達圖、玫瑰圖、氣泡圖、標準化指數折線圖等），"
+         "盡量做到「多維度在同一張」且有洞察意義，避免單調的單一數列圖。"
+         "所有標題／圖例／座標軸標示都必須是繁體中文。"),
+    ])
+    chain = prompt | llm_4o.with_structured_output(ChartPlan)
+    return chain.invoke({
+        "columns": columns_desc,
+        "profile": profile,
+        "recommendation": recommendation,
+        "instruction": DATAVIZ_USER_INSTRUCTION,
+        "extra": extra,
+    })
+
+
+# ── ECharts 風格深色主題繪圖引擎 (matplotlib) ───────────────────────────────────
+
+DATAVIZ_PALETTE = [
+    "#4992FF", "#7CFFB2", "#FDDD60", "#FF6E76", "#58D9F9",
+    "#9D96F5", "#FF8A45", "#05C091", "#DD79FF", "#3BA272",
+]
+_DV_BG = "#0B1120"
+_DV_PANEL = "#111C33"
+_DV_GRID = "#26314A"
+_DV_TEXT = "#E5E7EB"
+_DV_MUTED = "#94A3B8"
+
+
+def _dv_fmt_num(v) -> str:
+    try:
+        if v is None or pd.isna(v):
+            return ""
+    except (TypeError, ValueError):
+        pass
+    v = float(v)
+    if abs(v) >= 1000:
+        return f"{v:,.0f}"
+    if v == int(v):
+        return f"{v:.0f}"
+    return f"{v:.1f}"
+
+
+def _dv_style_axes(ax, title="", x_label="", y_label=""):
+    ax.set_facecolor(_DV_PANEL)
+    ax.grid(True, color=_DV_GRID, linewidth=0.7, linestyle="--", alpha=0.6)
+    ax.set_axisbelow(True)
+    for spine in ("top", "right"):
+        ax.spines[spine].set_visible(False)
+    for spine in ("left", "bottom"):
+        ax.spines[spine].set_color(_DV_GRID)
+    ax.tick_params(colors=_DV_MUTED, labelsize=9)
+    if title:
+        ax.set_title(title, color=_DV_TEXT, fontsize=13, fontweight="bold", pad=12, loc="left")
+    if x_label:
+        ax.set_xlabel(x_label, color=_DV_MUTED, fontsize=10)
+    if y_label:
+        ax.set_ylabel(y_label, color=_DV_MUTED, fontsize=10)
+
+
+def _dv_grid_slices(layout: str):
+    specs = {
+        "1x1": (1, 1, [(slice(0, 1), slice(0, 1))]),
+        "1x2": (1, 2, [(slice(0, 1), slice(0, 1)), (slice(0, 1), slice(1, 2))]),
+        "1x3": (1, 3, [(slice(0, 1), slice(0, 1)), (slice(0, 1), slice(1, 2)), (slice(0, 1), slice(2, 3))]),
+        "2x2": (2, 2, [(slice(0, 1), slice(0, 1)), (slice(0, 1), slice(1, 2)),
+                       (slice(1, 2), slice(0, 1)), (slice(1, 2), slice(1, 2))]),
+        "2+1": (2, 2, [(slice(0, 1), slice(0, 1)), (slice(0, 1), slice(1, 2)), (slice(1, 2), slice(0, 2))]),
+        "1+2": (2, 2, [(slice(0, 1), slice(0, 2)), (slice(1, 2), slice(0, 1)), (slice(1, 2), slice(1, 2))]),
+    }
+    if layout not in specs:
+        raise ValueError(f"未知排列方式：{layout}")
+    return specs[layout]
+
+
+def _dv_layout_count(layout: str) -> int:
+    return len(_dv_grid_slices(layout)[2])
+
+
+def _dv_make_grid(fig, layout: str, polar_flags):
+    rows, cols, slices = _dv_grid_slices(layout)
+    gs = fig.add_gridspec(rows, cols, hspace=0.5, wspace=0.32)
+    axes = []
+    for (rs, cs), polar in zip(slices, polar_flags):
+        axes.append(fig.add_subplot(gs[rs, cs], projection="polar" if polar else None))
+    return axes
+
+
+def _dv_sorted_categories(df: pd.DataFrame, field: str):
+    s = df[field]
+    if pd.api.types.is_numeric_dtype(s):
+        return sorted(s.dropna().unique().tolist())
+    parsed = pd.to_datetime(s, errors="coerce")
+    if len(s.dropna()) and parsed.notna().mean() > 0.8:
+        ordered = df.assign(_dv_p=parsed).sort_values("_dv_p")[field]
+        seen, cats = set(), []
+        for v in ordered:
+            if pd.notna(v) and v not in seen:
+                seen.add(v)
+                cats.append(v)
+        return cats
+    seen, cats = set(), []
+    for v in s:
+        if pd.notna(v) and v not in seen:
+            seen.add(v)
+            cats.append(v)
+    return cats
+
+
+def _dv_aggregate(df: pd.DataFrame, x_field: str, fields: List[str], agg: str):
+    cats = _dv_sorted_categories(df, x_field)
+    out = {}
+    if agg == "none":
+        sub = df.drop_duplicates(subset=[x_field]).set_index(x_field)
+        for f in fields:
+            out[f] = sub[f].reindex(cats)
+    elif agg == "count":
+        grouped = df.groupby(x_field)[fields[0]].count()
+        for f in fields:
+            out[f] = grouped.reindex(cats)
+    else:
+        grouped = df.groupby(x_field)[fields].agg(agg)
+        for f in fields:
+            out[f] = grouped[f].reindex(cats)
+    return cats, out
+
+
+def draw_dataviz_subplot(ax, df: pd.DataFrame, spec: "SubplotSpec", color_start: int = 0):
+    ct = spec.chart_type
+    colors = DATAVIZ_PALETTE[color_start:] + DATAVIZ_PALETTE[:color_start]
+
+    if ct in ("bar", "line", "bar_line", "stacked_bar", "stacked_area", "standardized_line"):
+        fields = [s.field for s in spec.series]
+        if not fields or not spec.x_field:
+            raise ValueError("缺少 x_field 或 series")
+        cats, data = _dv_aggregate(df, spec.x_field, fields, spec.agg)
+        if spec.top_n and fields:
+            base = data[fields[0]].fillna(0)
+            keep = set(base.sort_values(ascending=False).index[: spec.top_n])
+            cats = [c for c in cats if c in keep]
+            data = {f: data[f].reindex(cats) for f in fields}
+        x = np.arange(len(cats))
+        needs_secondary = any(s.axis == "secondary" for s in spec.series)
+        ax2 = ax.twinx() if needs_secondary else None
+        if ax2 is not None:
+            ax2.set_facecolor("none")
+            for spine in ax2.spines.values():
+                spine.set_visible(False)
+            ax2.tick_params(colors=_DV_MUTED, labelsize=9)
+            ax2.grid(False)
+
+        if ct == "standardized_line":
+            for i, f in enumerate(fields):
+                series = data[f].astype(float)
+                nz = series.dropna()
+                base_val = nz.iloc[0] if len(nz) else 1.0
+                base_val = base_val if base_val else 1.0
+                norm = series / base_val * 100
+                ax.plot(x, norm.values, marker="o", markersize=4, linewidth=2.2,
+                        color=colors[i % len(colors)], label=spec.series[i].label)
+            ax.axhline(100, color=_DV_MUTED, linewidth=0.8, linestyle=":")
+        elif ct == "stacked_area":
+            ys = [data[f].fillna(0).astype(float).values for f in fields]
+            labels = [s.label for s in spec.series]
+            ax.stackplot(x, *ys, labels=labels,
+                         colors=[colors[i % len(colors)] for i in range(len(fields))], alpha=0.85)
+        elif ct == "stacked_bar":
+            bottom = np.zeros(len(cats))
+            for i, f in enumerate(fields):
+                vals = data[f].fillna(0).astype(float).values
+                ax.bar(x, vals, bottom=bottom, width=0.6, color=colors[i % len(colors)], label=spec.series[i].label)
+                bottom = bottom + vals
+        else:
+            bar_series = [(i, s) for i, s in enumerate(spec.series) if (ct == "bar" or (ct == "bar_line" and s.kind == "bar"))]
+            line_series = [(i, s) for i, s in enumerate(spec.series) if (ct == "line" or (ct == "bar_line" and s.kind == "line"))]
+            n_bar = max(len(bar_series), 1)
+            bw = 0.8 / n_bar
+            for j, (i, s) in enumerate(bar_series):
+                target = ax2 if (s.axis == "secondary" and ax2 is not None) else ax
+                vals = data[s.field].fillna(0).astype(float).values
+                offset = (j - (len(bar_series) - 1) / 2) * bw
+                bars = target.bar(x + offset, vals, width=bw * 0.92, color=colors[i % len(colors)], label=s.label)
+                if len(cats) <= 14:
+                    for rect, v in zip(bars, vals):
+                        target.annotate(_dv_fmt_num(v), (rect.get_x() + rect.get_width() / 2, rect.get_height()),
+                                        ha="center", va="bottom", fontsize=7.5, color=_DV_MUTED)
+            for i, s in line_series:
+                target = ax2 if (s.axis == "secondary" and ax2 is not None) else ax
+                vals = data[s.field].astype(float).values
+                ls = "--" if s.axis == "secondary" else "-"
+                target.plot(x, vals, marker="o", markersize=4, linewidth=2.2, linestyle=ls,
+                            color=colors[i % len(colors)], label=s.label)
+
+        ax.set_xticks(x)
+        rotate = len(cats) > 6
+        ax.set_xticklabels([str(c) for c in cats], rotation=30 if rotate else 0, ha="right" if rotate else "center")
+        _dv_style_axes(ax, spec.title, spec.x_label, spec.y_label)
+        if ax2 is not None and spec.y2_label:
+            ax2.set_ylabel(spec.y2_label, color=_DV_MUTED, fontsize=10)
+        handles, labels_ = ax.get_legend_handles_labels()
+        if ax2 is not None:
+            h2, l2 = ax2.get_legend_handles_labels()
+            handles, labels_ = handles + h2, labels_ + l2
+        if labels_:
+            ax.legend(handles, labels_, loc="upper left", fontsize=8.5, frameon=False, labelcolor=_DV_TEXT)
+
+    elif ct == "heatmap":
+        if not (spec.x_field and spec.group_field and spec.value_field):
+            raise ValueError("heatmap 需要 x_field、group_field、value_field")
+        agg = spec.agg if spec.agg != "none" else "mean"
+        pivot = df.pivot_table(index=spec.x_field, columns=spec.group_field, values=spec.value_field, aggfunc=agg)
+        row_order = [r for r in _dv_sorted_categories(df, spec.x_field) if r in pivot.index]
+        col_order = [c for c in _dv_sorted_categories(df, spec.group_field) if c in pivot.columns]
+        pivot = pivot.reindex(index=row_order, columns=col_order)
+        cmap = LinearSegmentedColormap.from_list("dv_heat", ["#0B1120", "#1E3A8A", "#F6903D", "#FF3B30"])
+        im = ax.imshow(pivot.values.astype(float), cmap=cmap, aspect="auto")
+        ax.set_xticks(range(len(pivot.columns)))
+        ax.set_xticklabels([str(c) for c in pivot.columns], rotation=30, ha="right")
+        ax.set_yticks(range(len(pivot.index)))
+        ax.set_yticklabels([str(r) for r in pivot.index])
+        vmax = np.nanmax(pivot.values) if pivot.size else 0
+        for r in range(pivot.shape[0]):
+            for c in range(pivot.shape[1]):
+                v = pivot.values[r, c]
+                if pd.isna(v):
+                    continue
+                txt_color = "#0B1120" if vmax and v > vmax * 0.55 else _DV_TEXT
+                ax.text(c, r, _dv_fmt_num(v), ha="center", va="center", fontsize=7.5, color=txt_color)
+        cbar = plt.colorbar(im, ax=ax, fraction=0.04, pad=0.02)
+        cbar.outline.set_visible(False)
+        for lbl in cbar.ax.get_yticklabels():
+            lbl.set_color(_DV_MUTED)
+        _dv_style_axes(ax, spec.title, spec.x_label, spec.y_label)
+        ax.grid(False)
+
+    elif ct in ("radar", "rose"):
+        cat_field = spec.group_field or spec.x_field
+        if not cat_field:
+            raise ValueError(f"{ct} 需要 group_field 或 x_field")
+        cats = _dv_sorted_categories(df, cat_field)
+        n = len(cats)
+        angles = np.linspace(0, 2 * np.pi, n, endpoint=False)
+        ax.set_facecolor(_DV_PANEL)
+        if ct == "radar":
+            fields = [s.field for s in spec.series] or ([spec.value_field] if spec.value_field else [])
+            if not fields:
+                raise ValueError("radar 需要 series 或 value_field")
+            angles_closed = np.concatenate([angles, angles[:1]])
+            agg = spec.agg if spec.agg != "none" else "mean"
+            for i, f in enumerate(fields):
+                vals = df.groupby(cat_field)[f].agg(agg).reindex(cats).astype(float)
+                span = vals.max() - vals.min()
+                norm = (vals - vals.min()) / span if span else vals * 0
+                norm_closed = np.concatenate([norm.values, norm.values[:1]])
+                label = spec.series[i].label if i < len(spec.series) else f
+                ax.plot(angles_closed, norm_closed, linewidth=2, color=colors[i % len(colors)], label=label)
+                ax.fill(angles_closed, norm_closed, color=colors[i % len(colors)], alpha=0.15)
+            ax.legend(loc="upper right", bbox_to_anchor=(1.3, 1.12), fontsize=8, frameon=False, labelcolor=_DV_TEXT)
+        else:
+            if not spec.value_field:
+                raise ValueError("rose 需要 value_field")
+            agg = spec.agg if spec.agg != "none" else "mean"
+            vals = df.groupby(cat_field)[spec.value_field].agg(agg).reindex(cats).astype(float)
+            span = vals.max() - vals.min()
+            norm_vals = (vals - vals.min()) / span if span else vals * 0
+            cmap = LinearSegmentedColormap.from_list("dv_rose", ["#3BA272", "#FDDD60", "#FF6E76"])
+            width = 2 * np.pi / n * 0.92
+            ax.bar(angles, vals.values, width=width, color=[cmap(v) for v in norm_vals],
+                   edgecolor=_DV_BG, linewidth=1)
+            vmax = vals.max() if len(vals) else 0
+            for ang, v in zip(angles, vals.values):
+                ax.text(ang, v + vmax * 0.06, _dv_fmt_num(v), ha="center", va="center", fontsize=7.5, color=_DV_TEXT)
+        ax.set_xticks(angles)
+        ax.set_xticklabels([str(c) for c in cats], color=_DV_MUTED, fontsize=8.5)
+        ax.set_yticklabels([])
+        ax.spines["polar"].set_color(_DV_GRID)
+        ax.grid(color=_DV_GRID, alpha=0.5)
+        ax.set_title(spec.title, color=_DV_TEXT, fontsize=13, fontweight="bold", pad=18)
+
+    elif ct == "bubble":
+        if not (spec.x_field and (spec.series or spec.value_field)):
+            raise ValueError("bubble 需要 x_field 與 series[0]/value_field")
+        y_field = spec.series[0].field if spec.series else spec.value_field
+        x_field = spec.x_field
+        plot_df = df.dropna(subset=[x_field, y_field]).copy()
+        if spec.size_field:
+            sizes_raw = plot_df[spec.size_field].astype(float)
+            span = sizes_raw.max() - sizes_raw.min()
+            s_norm = 60 + 900 * ((sizes_raw - sizes_raw.min()) / span if span else sizes_raw * 0)
+        else:
+            s_norm = pd.Series(200, index=plot_df.index)
+        if spec.color_field and pd.api.types.is_numeric_dtype(plot_df[spec.color_field]):
+            c_vals = plot_df[spec.color_field].astype(float)
+            sc = ax.scatter(plot_df[x_field], plot_df[y_field], s=s_norm, c=c_vals, cmap="plasma",
+                            alpha=0.85, edgecolors=_DV_BG, linewidths=0.8)
+            cbar = plt.colorbar(sc, ax=ax, fraction=0.04, pad=0.02)
+            cbar.set_label(spec.color_field, color=_DV_MUTED, fontsize=9)
+            cbar.outline.set_visible(False)
+            for lbl in cbar.ax.get_yticklabels():
+                lbl.set_color(_DV_MUTED)
+        elif spec.color_field:
+            cats_c = plot_df[spec.color_field].astype(str).unique().tolist()
+            cmap_map = {c: colors[i % len(colors)] for i, c in enumerate(cats_c)}
+            for c in cats_c:
+                sub = plot_df[plot_df[spec.color_field].astype(str) == c]
+                ax.scatter(sub[x_field], sub[y_field], s=s_norm.loc[sub.index], color=cmap_map[c],
+                          alpha=0.85, edgecolors=_DV_BG, linewidths=0.8, label=c)
+            ax.legend(loc="upper left", fontsize=8.5, frameon=False, labelcolor=_DV_TEXT)
+        else:
+            ax.scatter(plot_df[x_field], plot_df[y_field], s=s_norm, color=colors[0],
+                      alpha=0.85, edgecolors=_DV_BG, linewidths=0.8)
+        if len(plot_df) <= 15 and spec.group_field and spec.group_field in plot_df.columns:
+            for _, row in plot_df.iterrows():
+                ax.annotate(str(row[spec.group_field]), (row[x_field], row[y_field]), fontsize=7.5,
+                           color=_DV_MUTED, xytext=(4, 4), textcoords="offset points")
+        _dv_style_axes(ax, spec.title, spec.x_label, spec.y_label)
+    else:
+        raise ValueError(f"未支援的圖表類型：{ct}")
+
+
+def _dv_safe_filename(s: str) -> str:
+    s = re.sub(r"[^\w一-鿿-]+", "_", s or "").strip("_")
+    return s[:40] or "chart"
+
+
+def render_dataviz_figure(df: pd.DataFrame, fig_spec: "FigureSpec", out_path: str, source_note: str = ""):
+    layout = fig_spec.layout
+    subplots = fig_spec.subplots
+    n_expected = _dv_layout_count(layout)
+    if len(subplots) != n_expected:
+        fallback = {1: "1x1", 2: "1x2", 3: "1x3", 4: "2x2"}
+        layout = fallback.get(len(subplots), "1x2")
+        subplots = subplots[: _dv_layout_count(layout)]
+
+    fig = plt.figure(figsize=(16, 9 if len(subplots) > 1 else 6), dpi=160, facecolor=_DV_BG)
+    polar_flags = [sp.chart_type in ("radar", "rose") for sp in subplots]
+    axes = _dv_make_grid(fig, layout, polar_flags)
+    for i, (ax, sp) in enumerate(zip(axes, subplots)):
+        try:
+            draw_dataviz_subplot(ax, df, sp, color_start=(i * 2) % len(DATAVIZ_PALETTE))
+        except Exception as e:
+            ax.set_facecolor(_DV_PANEL)
+            ax.axis("off")
+            ax.text(0.5, 0.5, f"（此子圖繪製失敗：{e}）", ha="center", va="center",
+                    color="#FF6E76", fontsize=9, wrap=True, transform=ax.transAxes)
+            continue
+        if sp.note:
+            ax.text(0.0, -0.24, f"※ {sp.note}", transform=ax.transAxes, fontsize=8, color=_DV_MUTED)
+
+    fig.suptitle(fig_spec.figure_title, color="#FFFFFF", fontsize=17, fontweight="bold", x=0.02, ha="left", y=0.995)
+    if source_note:
+        fig.text(0.99, 0.01, source_note, color=_DV_MUTED, fontsize=8, ha="right")
+    fig.tight_layout(rect=[0, 0.02, 1, 0.95])
+    fig.savefig(out_path, format="jpg", facecolor=_DV_BG, bbox_inches="tight")
+    plt.close(fig)
+    return out_path
+
+
+def run_dataviz_generate(state, recommendation, extra_instruction):
+    if not state or "sheets" not in state:
+        return "*請先上傳資料並產生圖表建議。*", [], None
+    df = state["sheets"][state["current"]]
+    profile = build_data_profile(df)
+    try:
+        plan = generate_chart_plan(df, profile, recommendation or "", extra_instruction or "")
+    except Exception as e:
+        return f"⚠️ 圖表規劃失敗：{e}", [], None
+
+    tmpdir = tempfile.mkdtemp(prefix="dataviz_")
+    paths = []
+    status_lines = []
+    for i, fig_spec in enumerate(plan.figures, 1):
+        out_path = os.path.join(tmpdir, f"Chart{i}_{_dv_safe_filename(fig_spec.figure_title)}.jpg")
+        try:
+            render_dataviz_figure(df, fig_spec, out_path, source_note="資料來源：使用者上傳檔案")
+            paths.append(out_path)
+            status_lines.append(f"✅ Chart{i}：{fig_spec.figure_title}")
+        except Exception as e:
+            status_lines.append(f"❌ Chart{i}：{fig_spec.figure_title} 生成失敗（{e}）")
+    status = "\n".join(status_lines) if status_lines else "*未產出任何圖表。*"
+    return status, paths, (paths or None)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -3372,6 +3956,90 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
             fn=convert_word_to_dashboard_tab5,
             inputs=[word_direct_upload5],
             outputs=[word_convert_download5, word_convert_status5],
+        )
+
+    # ── Tab 6 ──────────────────────────────────────────────────────────────────
+    with gr.Tab("📊 數據視覺化大師Agent"):
+        gr.Markdown(
+            "# 數據視覺化大師Agent\n"
+            "上傳 **CSV / Excel** 數據檔案，AI 將扮演大數據視覺化大師，"
+            "參考 [Apache ECharts](https://echarts.apache.org/examples/zh/index.html) 風格，"
+            "根據資料特性提出高級感圖表建議，並自動產出**多維度組合圖表**，"
+            "繁體中文標示、含完整圖例與座標軸，可直接下載 JPG 圖片。"
+        )
+
+        dataviz_state = gr.State(None)
+
+        with gr.Row():
+            with gr.Column(scale=1):
+                dataviz_file = gr.File(
+                    label="上傳 CSV 或 Excel 檔案",
+                    file_types=[".csv", ".xlsx", ".xls"],
+                    file_count="single",
+                )
+                dataviz_sheet = gr.Dropdown(label="選擇工作表（Excel 多分頁時顯示）", visible=False)
+                dataviz_status = gr.Markdown(value="*請上傳資料檔案。*")
+                dataviz_preview = gr.Dataframe(label="資料預覽（前 10 列）", interactive=False)
+                dataviz_context = gr.Textbox(
+                    label="補充背景資訊（選填）",
+                    placeholder="例如：這是台北市信用卡消費統計、單位為億元、時間跨度2014-2025……",
+                    lines=4,
+                )
+                dataviz_recommend_btn = gr.Button("💡 產生圖表建議", variant="secondary", size="lg")
+                dataviz_clear_btn = gr.Button("清除", size="lg")
+
+            with gr.Column(scale=1):
+                dataviz_recommendation = gr.Markdown(
+                    value="*上傳資料並點擊「產生圖表建議」後，大數據視覺化大師的建議將顯示於此……*"
+                )
+                dataviz_extra = gr.Textbox(
+                    label="額外指示（選填，將加入生成圖表的提示）",
+                    placeholder="例如：想看的欄位、特定期間、想強調的洞察……",
+                    lines=3,
+                )
+                dataviz_generate_btn = gr.Button("🎨 生成多維度組合圖（JPG）", variant="primary", size="lg")
+                dataviz_gen_status = gr.Markdown(value="")
+
+        gr.Markdown("### 📥 圖表輸出")
+        dataviz_gallery = gr.Gallery(label="圖表預覽", columns=2, height=560, object_fit="contain")
+        dataviz_files = gr.File(label="下載 JPG 圖表", file_count="multiple", interactive=False)
+
+        dataviz_file.change(
+            fn=dataviz_load_file,
+            inputs=[dataviz_file],
+            outputs=[dataviz_state, dataviz_sheet, dataviz_preview, dataviz_status],
+        )
+        dataviz_sheet.change(
+            fn=dataviz_switch_sheet,
+            inputs=[dataviz_state, dataviz_sheet],
+            outputs=[dataviz_state, dataviz_preview, dataviz_status],
+        )
+        dataviz_recommend_btn.click(
+            fn=run_dataviz_recommend,
+            inputs=[dataviz_state, dataviz_context],
+            outputs=[dataviz_recommendation],
+        )
+        dataviz_generate_btn.click(
+            fn=run_dataviz_generate,
+            inputs=[dataviz_state, dataviz_recommendation, dataviz_extra],
+            outputs=[dataviz_gen_status, dataviz_gallery, dataviz_files],
+        )
+        dataviz_clear_btn.click(
+            fn=lambda: (
+                None, None,
+                gr.update(choices=[], value=None, visible=False),
+                None,
+                "*請上傳資料檔案。*",
+                "",
+                "*上傳資料並點擊「產生圖表建議」後，大數據視覺化大師的建議將顯示於此……*",
+                "",
+                "",
+                [],
+                None,
+            ),
+            outputs=[dataviz_file, dataviz_state, dataviz_sheet, dataviz_preview,
+                     dataviz_status, dataviz_context, dataviz_recommendation,
+                     dataviz_extra, dataviz_gen_status, dataviz_gallery, dataviz_files],
         )
 
 if __name__ == "__main__":
