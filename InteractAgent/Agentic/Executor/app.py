@@ -69,6 +69,9 @@ _api_key = os.environ.get("OPENAI_API_KEY")
 openai_client = OpenAI(api_key=_api_key)
 llm_4o = ChatOpenAI(model="gpt-4o", temperature=0.7, api_key=_api_key)
 llm_mini = ChatOpenAI(model="gpt-4o-mini", temperature=0, api_key=_api_key)
+# gpt-4o's TPM quota (30k) is too small for this agent's long system prompt on some accounts;
+# gpt-4o-mini has a much larger TPM quota and comfortably fits it.
+llm_presentation = ChatOpenAI(model="gpt-4o-mini", temperature=0.7, api_key=_api_key)
 
 # ── File extraction helpers ────────────────────────────────────────────────────
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".svg"}
@@ -4292,7 +4295,7 @@ def presentation_planner(state: PresentationState):
          "但可依情境調整）。\n\n"
          "使用者提供的資料：\n{input}"),
     ])
-    planner = prompt | llm_4o.with_structured_output(PresentationPlan)
+    planner = prompt | llm_presentation.with_structured_output(PresentationPlan)
     result = planner.invoke({"input": state["input"]})
     return {"plan": result.steps}
 
@@ -4311,7 +4314,7 @@ def presentation_executor(state: PresentationState):
          "已完成章節（供參考，保持一致性，不要重複輸出）：\n{completed}\n\n"
          "請現在產出「{section}」的完整內容。{format_hint}"),
     ])
-    chain = prompt | llm_4o
+    chain = prompt | llm_presentation
     result = chain.invoke({
         "input": state["input"],
         "completed": completed,
