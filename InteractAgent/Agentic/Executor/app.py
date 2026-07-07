@@ -4388,6 +4388,373 @@ def run_presentation_design(materials: str, presentation_context: str, user_prom
                 yield value["response"]
 
 
+# ── Tab 7 HTML dashboard: Word → 互動式簡報藍圖 HTML ────────────────────────────
+
+_PRES_EXTRACT_SYSTEM = "你是資料結構化助理。只輸出符合要求的 JSON，不輸出任何說明。每一個 schema 欄位都必須輸出，不可省略、不可留空陣列。"
+
+# NOTE: split into core (hero + slides) and style (3 style options + narrative logic +
+# follow-up) calls for the same reason as the Tab 4/5 extractors — bundling everything into
+# one call risks the fields listed last (style_options, follow_up) being dropped or thinned.
+_PRES_EXTRACT_PROMPT_CORE = """\
+請從以下簡報製作藍圖內容提取資料，輸出 JSON（繁體中文）。
+
+Schema：
+{
+  "title": "簡報標題或專案名稱（15字以內）",
+  "presentation_type": "簡報定位，例如商業提案、教學簡報、研究發表",
+  "audience": "主要受眾",
+  "goal": "核心目標，一句話",
+  "duration_pages": "簡報時間或頁數，例如 10分鐘／10頁",
+  "narrative_theme": "簡報主軸，一句話",
+  "key_takeaway": "聽眾看完後應該記住的重點",
+  "narrative_from": "敘事從什麼狀態開始",
+  "narrative_to": "敘事推進到什麼狀態",
+  "narrative_conclude": "最後收束到什麼行動或結論",
+  "slides": [
+    {
+      "page_no": "頁碼",
+      "role": "頁面角色",
+      "persuasion_task": "說服任務",
+      "title": "頁面標題",
+      "message": "核心訊息",
+      "content_points": ["內容安排重點1", "重點2"],
+      "layout": "建議版面",
+      "visual": "視覺素材",
+      "chart": "圖表或示意圖",
+      "speaker_notes": "講者說明方向",
+      "need_more_data": "需要補充資料，若無則填「無」"
+    }
+  ]
+}
+
+若原文只有表格版（無逐頁卡片），也請盡量拆解成 slides 陣列，每一列對應一個項目。
+只輸出 JSON，不要任何說明。
+
+---
+簡報製作藍圖內容：
+{content}
+"""
+
+_PRES_EXTRACT_PROMPT_STYLE = """\
+請從以下簡報製作藍圖內容，提取「簡報風格方案」與「敘事邏輯／補強建議」，輸出 JSON（繁體中文）。
+即使內容出現在後段、篇幅較長，也必須完整提取 3 套風格方案，不可省略或留空。
+
+Schema：
+{
+  "style_options": [
+    {
+      "name": "風格名稱",
+      "positioning": "風格定位",
+      "impression": "觀眾第一印象",
+      "best_for": "適合情境",
+      "primary": "#RRGGBB",
+      "secondary": "#RRGGBB",
+      "background": "#RRGGBB",
+      "text": "#RRGGBB",
+      "accent": "#RRGGBB",
+      "chart_colors": ["#RRGGBB", "#RRGGBB", "#RRGGBB"],
+      "fonts": "字體建議（標題／內文／數字重點）",
+      "layout_rules": ["版面原則1", "版面原則2"],
+      "risk": "使用風險",
+      "recommended": true 或 false（只有一套為 true，且必須是原文明確指出的主推薦方案）
+    }
+  ],
+  "narrative_logic": "整體敘事邏輯的一段說明文字",
+  "follow_up_suggestions": ["補強建議1", "補強建議2", "補強建議3"]
+}
+
+只輸出 JSON，不要任何說明。若原文顏色以中文顏色名稱描述而非 HEX 色號，請合理轉換為對應的 HEX 色號。
+
+---
+簡報製作藍圖內容：
+{content}
+"""
+
+_PRES_DASH_CSS = """
+:root{--bg:#0d1117;--card:#161b22;--card2:#1a2035;--gold:#f0b429;--cyan:#21d4fd;
+--red:#ff6b6b;--purple:#8b5cf6;--blue:#3b82f6;--orange:#f97316;--green:#3ba272;
+--text:#e6edf3;--muted:#8b949e;--border:rgba(33,212,253,.15)}
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:var(--bg);color:var(--text);font-family:'Noto Sans TC','Inter',sans-serif;font-size:14px;line-height:1.6}
+.topnav{display:flex;justify-content:space-between;align-items:center;padding:0 24px;min-height:70px;background:#0d1117;border-bottom:1px solid var(--border);position:sticky;top:0;z-index:100;gap:12px;flex-wrap:wrap}
+.nav-left{display:flex;flex-direction:column;gap:2px}
+.nav-row1{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.nav-icon{color:var(--cyan);font-size:18px;font-weight:700}
+.nav-title{font-size:16px;font-weight:700;color:var(--text)}
+.nav-sep{width:1px;height:18px;background:var(--border);flex-shrink:0}
+.nav-sub{font-size:13px;color:var(--muted)}
+.nav-right{display:flex;gap:24px;flex-shrink:0}
+.nav-kpi{text-align:right}
+.nav-kpi-lbl{font-size:10px;color:var(--muted);letter-spacing:1px;text-transform:uppercase}
+.nav-kpi-val{font-size:13px;font-weight:700;color:var(--gold)}
+.page{max-width:1400px;margin:0 auto;padding:20px 16px}
+.sec-title{font-size:13px;font-weight:700;color:var(--text);margin:24px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--gold);display:inline-block}
+.hero-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:12px}
+.hero-card{background:var(--card);border-radius:10px;padding:14px;border:1px solid var(--border)}
+.hero-lbl{font-size:10px;color:var(--muted);letter-spacing:.5px;text-transform:uppercase;margin-bottom:4px}
+.hero-val{font-size:14px;font-weight:700;color:var(--text)}
+.narrative-box{background:var(--card);border-radius:12px;padding:18px 20px;border:1px solid var(--border);margin-top:8px}
+.narrative-flow{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:10px;font-size:12px;color:var(--muted)}
+.narrative-flow .step{background:var(--card2);border-radius:20px;padding:5px 12px;color:var(--text)}
+.narrative-flow .arrow{color:var(--cyan)}
+.slide-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:14px;margin-top:8px}
+.slide-card{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--border);display:flex;flex-direction:column;gap:6px}
+.slide-top{display:flex;align-items:center;gap:8px;margin-bottom:2px}
+.slide-no{background:var(--gold);color:#000;font-weight:800;font-size:12px;border-radius:6px;padding:2px 8px;flex-shrink:0}
+.slide-role{font-size:11px;color:var(--cyan);font-weight:600}
+.slide-title{font-size:14px;font-weight:700;color:var(--text)}
+.slide-task{font-size:11px;color:var(--orange);margin-bottom:2px}
+.slide-msg{font-size:12px;color:var(--text);font-weight:500;line-height:1.5}
+.slide-points{font-size:11px;color:var(--muted);line-height:1.6;padding-left:14px}
+.slide-meta{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:10.5px;color:var(--muted);margin-top:4px;border-top:1px solid var(--border);padding-top:8px}
+.slide-meta b{color:var(--text);font-weight:600}
+.slide-note{font-size:10.5px;color:var(--purple);margin-top:2px}
+.slide-need{font-size:10.5px;color:var(--red);font-style:italic}
+.style-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px;margin-top:8px}
+.style-card{background:var(--card);border-radius:12px;padding:16px;border:1px solid var(--border);position:relative}
+.style-card.rec{border:2px solid var(--gold);box-shadow:0 0 0 1px rgba(240,180,41,.25)}
+.style-ribbon{position:absolute;top:-1px;right:14px;background:var(--gold);color:#000;font-size:10px;font-weight:800;padding:3px 10px;border-radius:0 0 6px 6px}
+.style-name{font-size:14px;font-weight:700;color:var(--text);margin-bottom:2px}
+.style-pos{font-size:11px;color:var(--cyan);margin-bottom:8px}
+.style-row{font-size:11px;color:var(--muted);margin-bottom:6px;line-height:1.5}
+.style-row b{color:var(--text)}
+.swatches{display:flex;gap:6px;margin:8px 0}
+.swatch{width:26px;height:26px;border-radius:6px;border:1px solid rgba(255,255,255,.15);flex-shrink:0}
+.swatch-lbl{font-size:9px;color:var(--muted);text-align:center;margin-top:2px}
+.chart-colors{display:flex;gap:4px;margin:6px 0}
+.chart-colors .dot{width:14px;height:14px;border-radius:50%;border:1px solid rgba(255,255,255,.2)}
+.style-rules{font-size:10.5px;color:var(--muted);line-height:1.6;padding-left:14px;margin-top:6px}
+.style-risk{font-size:10.5px;color:var(--red);margin-top:8px;border-top:1px solid var(--border);padding-top:8px}
+.suggest-card{background:rgba(240,180,41,.04);border:1px solid var(--gold);border-radius:12px;padding:18px 20px;margin-top:8px}
+.suggest-item{display:flex;gap:8px;margin-bottom:8px;font-size:12px;color:var(--text);line-height:1.5}
+.suggest-dot{width:7px;height:7px;border-radius:50%;background:var(--gold);flex-shrink:0;margin-top:6px}
+@media(max-width:900px){.hero-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:600px){.hero-grid{grid-template-columns:1fr}.topnav{min-height:auto;padding:12px 16px;flex-direction:column;align-items:flex-start}}
+"""
+
+
+def _pres_render_slides(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（未提取到逐頁內容）</p>'
+    out = []
+    for s in items:
+        points = "".join(f"<li>{p}</li>" for p in s.get("content_points", []))
+        need = s.get("need_more_data", "")
+        need_html = f'<div class="slide-need">【建議補充】{need}</div>' if need and need not in ("無", "-", "—") else ""
+        out.append(
+            f'<div class="slide-card">'
+            f'<div class="slide-top"><span class="slide-no">P{s.get("page_no","?")}</span>'
+            f'<span class="slide-role">{s.get("role","")}</span></div>'
+            f'<div class="slide-title">{s.get("title","")}</div>'
+            f'<div class="slide-task">🎯 {s.get("persuasion_task","")}</div>'
+            f'<div class="slide-msg">{s.get("message","")}</div>'
+            f'<ul class="slide-points">{points}</ul>'
+            f'<div class="slide-meta">'
+            f'<div><b>版面</b> {s.get("layout","")}</div>'
+            f'<div><b>視覺</b> {s.get("visual","")}</div>'
+            f'<div><b>圖表</b> {s.get("chart","")}</div>'
+            f'<div><b>講者</b> {s.get("speaker_notes","")}</div>'
+            f'</div>{need_html}</div>'
+        )
+    return "".join(out)
+
+
+def _pres_render_styles(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（未提取到風格方案）</p>'
+    out = []
+    for s in items:
+        rec = s.get("recommended", False)
+        card_cls = "style-card rec" if rec else "style-card"
+        ribbon = '<div class="style-ribbon">★ 主推薦</div>' if rec else ""
+        swatches = "".join(
+            f'<div><div class="swatch" style="background:{s.get(k, "#333")}"></div>'
+            f'<div class="swatch-lbl">{lbl}</div></div>'
+            for k, lbl in (("primary", "主色"), ("secondary", "輔色"), ("background", "背景"),
+                           ("text", "文字"), ("accent", "強調"))
+        )
+        chart_dots = "".join(
+            f'<div class="dot" style="background:{c}"></div>' for c in s.get("chart_colors", [])
+        )
+        rules = "".join(f"<li>{r}</li>" for r in s.get("layout_rules", []))
+        out.append(
+            f'<div class="{card_cls}">{ribbon}'
+            f'<div class="style-name">{s.get("name","")}</div>'
+            f'<div class="style-pos">{s.get("positioning","")}</div>'
+            f'<div class="style-row"><b>觀眾第一印象</b>　{s.get("impression","")}</div>'
+            f'<div class="style-row"><b>適合情境</b>　{s.get("best_for","")}</div>'
+            f'<div class="swatches">{swatches}</div>'
+            f'<div class="style-row">圖表配色 <div class="chart-colors">{chart_dots}</div></div>'
+            f'<div class="style-row"><b>字體建議</b>　{s.get("fonts","")}</div>'
+            f'<ul class="style-rules">{rules}</ul>'
+            f'<div class="style-risk">⚠ {s.get("risk","")}</div></div>'
+        )
+    return "".join(out)
+
+
+def _pres_render_suggestions(items: list) -> str:
+    if not items:
+        return '<p style="color:var(--muted);font-size:12px">（無補強建議）</p>'
+    return "".join(
+        f'<div class="suggest-item"><div class="suggest-dot"></div><div>{s}</div></div>'
+        for s in items
+    )
+
+
+def _extract_presentation_dashboard_json_stream(content: str):
+    """Generator: yields (data_so_far, status_message) at each extraction stage."""
+    import json as _j
+    text = content[:30000]
+    data: dict = {}
+    yield data, "分析簡報主軸與逐頁內容..."
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _PRES_EXTRACT_SYSTEM},
+                {"role": "user", "content": _PRES_EXTRACT_PROMPT_CORE.replace("{content}", text)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=3000,
+            temperature=0,
+        )
+        data.update(_j.loads(resp.choices[0].message.content))
+    except Exception:
+        pass
+    yield data, "分析簡報風格方案與補強建議..."
+    try:
+        resp = openai_client.chat.completions.create(
+            model="gpt-4o",
+            messages=[
+                {"role": "system", "content": _PRES_EXTRACT_SYSTEM},
+                {"role": "user", "content": _PRES_EXTRACT_PROMPT_STYLE.replace("{content}", text)},
+            ],
+            response_format={"type": "json_object"},
+            max_tokens=2500,
+            temperature=0,
+        )
+        data.update(_j.loads(resp.choices[0].message.content))
+    except Exception:
+        pass
+    yield data, "整理資料中..."
+
+
+def _extract_presentation_dashboard_json(content: str) -> dict:
+    data: dict = {}
+    for data, _status in _extract_presentation_dashboard_json_stream(content):
+        pass
+    return data
+
+
+def _render_presentation_dashboard_html(data: dict) -> str:
+    title = data.get("title", "簡報製作藍圖")
+    ptype = data.get("presentation_type", "—")
+    audience = data.get("audience", "—")
+    goal = data.get("goal", "—")
+    duration = data.get("duration_pages", "—")
+
+    slides_html = _pres_render_slides(data.get("slides", []))
+    styles_html = _pres_render_styles(data.get("style_options", []))
+    suggestions_html = _pres_render_suggestions(data.get("follow_up_suggestions", []))
+    narrative_logic = data.get("narrative_logic", "")
+
+    parts = [
+        "<!DOCTYPE html>",
+        "<html lang='zh-TW'>",
+        "<head>",
+        '<meta charset="UTF-8">',
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0">',
+        f"<title>{title}</title>",
+        '<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@300;400;500;700'
+        '&family=Inter:wght@300;400;500;700&display=swap" rel="stylesheet">',
+        f"<style>{_PRES_DASH_CSS}</style>",
+        "</head>",
+        "<body>",
+        '<nav class="topnav">',
+        '<div class="nav-left">',
+        '<div class="nav-row1">',
+        '<span class="nav-icon">🖼️</span>',
+        '<span class="nav-title">簡報製作藍圖</span>',
+        '<div class="nav-sep"></div>',
+        f'<span class="nav-sub">{title}</span>',
+        '</div></div>',
+        '<div class="nav-right">',
+        f'<div class="nav-kpi"><div class="nav-kpi-lbl">TYPE</div><div class="nav-kpi-val">{ptype}</div></div>',
+        f'<div class="nav-kpi"><div class="nav-kpi-lbl">DURATION</div><div class="nav-kpi-val">{duration}</div></div>',
+        '</div></nav>',
+        '<div class="page">',
+        '<div class="hero-grid">',
+        f'<div class="hero-card"><div class="hero-lbl">簡報定位</div><div class="hero-val">{ptype}</div></div>',
+        f'<div class="hero-card"><div class="hero-lbl">主要受眾</div><div class="hero-val">{audience}</div></div>',
+        f'<div class="hero-card"><div class="hero-lbl">核心目標</div><div class="hero-val">{goal}</div></div>',
+        f'<div class="hero-card"><div class="hero-lbl">時間／頁數</div><div class="hero-val">{duration}</div></div>',
+        '</div>',
+        '<div class="narrative-box">',
+        f'<div class="sec-title" style="margin-top:0">簡報主軸</div>',
+        f'<div style="font-size:13px;font-weight:600">{data.get("narrative_theme","")}</div>',
+        f'<div style="font-size:12px;color:var(--muted);margin-top:6px">聽眾應記住：{data.get("key_takeaway","")}</div>',
+        '<div class="narrative-flow">',
+        f'<span class="step">{data.get("narrative_from","")}</span>',
+        '<span class="arrow">→</span>',
+        f'<span class="step">{data.get("narrative_to","")}</span>',
+        '<span class="arrow">→</span>',
+        f'<span class="step">{data.get("narrative_conclude","")}</span>',
+        '</div>',
+        f'<div style="font-size:12px;color:var(--muted);margin-top:12px;line-height:1.7">{narrative_logic}</div>',
+        '</div>',
+        '<div class="sec-title">每頁簡報製作藍圖</div>',
+        f'<div class="slide-grid">{slides_html}</div>',
+        '<div class="sec-title">簡報風格方案</div>',
+        f'<div class="style-grid">{styles_html}</div>',
+        '<div class="sec-title">補強建議</div>',
+        f'<div class="suggest-card">{suggestions_html}</div>',
+        '</div>',
+        "</body></html>",
+    ]
+    return "\n".join(parts)
+
+
+def docx_to_presentation_dashboard_html_stream(file_obj):
+    """Generator: yields (html_path_or_None, status_message) while converting a .docx to
+    an interactive 簡報製作藍圖 HTML dashboard. html_path is only non-None on the final yield."""
+    if file_obj is None:
+        yield None, "⚠️ 請先上傳 Word 檔案。"
+        return
+    yield None, "讀取 Word 文件..."
+    from docx import Document as _DocxDocument
+    doc = _DocxDocument(file_obj.name)
+    paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+    for table in doc.tables:
+        for row in table.rows:
+            cells = [c.text.strip() for c in row.cells if c.text.strip()]
+            if cells:
+                paragraphs.append(" | ".join(cells))
+    text = "\n".join(paragraphs)
+    if not text.strip():
+        yield None, "⚠️ 無法從 Word 檔案讀取到文字內容，請確認檔案格式。"
+        return
+    data = {}
+    for data, status in _extract_presentation_dashboard_json_stream(text):
+        yield None, status
+    yield None, "產生互動式 HTML 簡報藍圖..."
+    html_content = _render_presentation_dashboard_html(data)
+    tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".html", mode="w", encoding="utf-8")
+    tmp.write(html_content)
+    tmp.close()
+    yield tmp.name, "✅ 完成！"
+
+
+def convert_word_to_presentation_dashboard(file_obj):
+    for path, status in docx_to_presentation_dashboard_html_stream(file_obj):
+        if path:
+            yield gr.update(value=path, visible=True), status
+        elif status.startswith("⚠️"):
+            yield gr.update(visible=False), status
+        else:
+            yield gr.update(visible=False), f"🔄 {status}"
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 # Gradio UI
 # ══════════════════════════════════════════════════════════════════════════════
@@ -5072,6 +5439,27 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                         label="Word 檔案", visible=False, interactive=False
                     )
 
+                gr.Markdown("---")
+                gr.Markdown("### 📄 Word 直轉互動儀表板")
+                gr.Markdown(
+                    "上傳現有 Word 簡報藍圖（.docx），直接轉換為互動 HTML 儀表板，"
+                    "**無需重新規劃**，速度更快。"
+                )
+                with gr.Row():
+                    presentation_word_direct_upload = gr.File(
+                        label="上傳 Word 檔案 (.docx)",
+                        file_types=[".docx"],
+                        file_count="single",
+                        scale=2,
+                    )
+                    presentation_word_convert_btn = gr.Button(
+                        "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
+                    )
+                presentation_word_convert_status = gr.Markdown(value="", visible=True)
+                presentation_word_convert_download = gr.File(
+                    label="轉換後的互動 HTML 簡報藍圖", visible=False, interactive=False
+                )
+
         file_upload7.upload(
             fn=extract_files_text,
             inputs=[file_upload7],
@@ -5086,14 +5474,22 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
         presentation_clear_btn.click(
             fn=lambda: (None, "", "", "",
                         "*送出資料後，Agent 將規劃章節並逐一生成，結果即時顯示於此……*",
-                        gr.update(value=None, visible=False)),
+                        gr.update(value=None, visible=False),
+                        None, gr.update(value=None, visible=False), ""),
             outputs=[file_upload7, presentation_input, presentation_context, user_prompt7,
-                     presentation_output, presentation_word_file],
+                     presentation_output, presentation_word_file,
+                     presentation_word_direct_upload, presentation_word_convert_download,
+                     presentation_word_convert_status],
         )
         presentation_download_word.click(
             fn=lambda content: (generate_word_file(content), gr.update(visible=True)),
             inputs=[presentation_output],
             outputs=[presentation_word_file, presentation_word_file],
+        )
+        presentation_word_convert_btn.click(
+            fn=convert_word_to_presentation_dashboard,
+            inputs=[presentation_word_direct_upload],
+            outputs=[presentation_word_convert_download, presentation_word_convert_status],
         )
 
 if __name__ == "__main__":
