@@ -5453,7 +5453,7 @@ with gr.Blocks(title="AI課程教材設計&客戶提案總監 (LangGraph)") as d
                         scale=2,
                     )
                     presentation_word_convert_btn = gr.Button(
-                        "Word → 🎨 生成互動 HTML 儀表板", variant="secondary", size="lg", scale=1
+                        "Word → 🎨 生成HTML檔案", variant="secondary", size="lg", scale=1
                     )
                 presentation_word_convert_status = gr.Markdown(value="", visible=True)
                 presentation_word_convert_download = gr.File(
