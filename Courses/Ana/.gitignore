@@ -1,0 +1,8 @@
+ai-map-agent-489008-35de77ef054e.json
+*serviceaccount*.json
+*service-account*.json
+*credentials*.json
+*.parquet
+data/export.xml
+__pycache__/
+*.pyc

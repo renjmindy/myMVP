@@ -1,0 +1,4 @@
+motion_context,n_readings,avg_hr,stddev_hr,min_hr,max_hr
+0,349,77.3,11.8,58,98
+1,346,77.5,11.6,58,98
+2,305,78.6,11.0,58,98
