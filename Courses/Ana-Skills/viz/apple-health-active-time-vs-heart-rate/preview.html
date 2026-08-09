@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Preview | More active-tagged time didn't mean a higher heart rate</title>
+  <style>
+    :root {
+      --bg: #ece7dd;
+      --ink: #1c211f;
+      --muted: #565f5b;
+      --panel: rgba(251, 250, 246, 0.9);
+      --rule: rgba(28, 33, 31, 0.12);
+      --accent: #a3384a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Arial, Helvetica, sans-serif;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at top right, rgba(163, 56, 74, 0.08), transparent 26%),
+        linear-gradient(180deg, #f6f2e9 0%, var(--bg) 100%);
+    }
+    .page { max-width: 940px; margin: 0 auto; padding: 26px 16px 40px; }
+    .intro { margin: 0 0 22px; }
+    .kicker {
+      margin: 0 0 10px;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.14em;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    h1 {
+      margin: 0 0 12px;
+      font: 600 clamp(2.1rem, 4.6vw, 3.6rem)/1.02 Georgia, "Times New Roman", serif;
+      letter-spacing: -0.02em;
+      max-width: 20ch;
+    }
+    .deck {
+      margin: 0;
+      line-height: 1.62;
+      color: var(--muted);
+      font-size: clamp(1.02rem, 1.6vw, 1.12rem);
+      max-width: 68ch;
+    }
+    .artifact {
+      background: var(--panel);
+      border: 1px solid var(--rule);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 20px 44px rgba(30, 34, 32, 0.10);
+    }
+    iframe { display: block; width: 100%; height: 780px; border: 0; background: transparent; }
+    .notes {
+      display: grid;
+      gap: 10px;
+      padding: 18px 20px 22px;
+      border-top: 1px solid var(--rule);
+      background: rgba(251, 250, 246, 0.7);
+    }
+    .notes p { margin: 0; line-height: 1.55; color: var(--muted); }
+    .notes strong { color: var(--ink); }
+    .notes a { color: var(--ink); }
+    @media (max-width: 720px) {
+      .page { padding: 18px 10px 24px; }
+      h1 { max-width: 14ch; }
+      .artifact { border-radius: 16px; }
+      iframe { height: 900px; }
+      .notes { padding: 16px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <section class="intro">
+      <p class="kicker">Apple Health &middot; Heart Rate</p>
+      <h1>More active-tagged time didn&rsquo;t mean a higher heart rate</h1>
+      <p class="deck">
+        Across the 10 fully-sampled days in this export, days with more heart-rate readings tagged &ldquo;active&rdquo; are not meaningfully higher in average heart rate than quieter days. The relationship is weak (r &asymp; 0.23) and close to flat.
+      </p>
+    </section>
+    <section class="artifact">
+      <iframe id="viz-frame" src="./index.html" title="More active-tagged time didn't mean a higher heart rate"></iframe>
+      <div class="notes">
+        <p><strong>Takeaway:</strong> More active-tagged minutes in a day does not track with a higher average heart rate in this window &mdash; the strongest reading of the data is the absence of a relationship, not the presence of one.</p>
+        <p><strong>Scope:</strong> This export contains only heart-rate readings, no Workout or ActiveEnergyBurned data, and covers 11 days in January 2020 &mdash; not a full year. &ldquo;Active-tagged hours&rdquo; is Apple&rsquo;s coarse motion-context flag on background heart-rate sampling, not a logged exercise duration. Two partial-coverage days (Jan 16, Jan 27) are excluded from the comparison.</p>
+        <p><strong>Source:</strong> Apple Health export, parsed and loaded to BigQuery (<code>ai-map-agent-489008.apple_health.heartrate</code>); full query and pipeline in <code>Courses/Ana/</code>.</p>
+      </div>
+    </section>
+  </main>
+  <script>
+    window.addEventListener("message", (event) => {
+      if (!event.data || event.data.type !== "viz-height") return;
+      const frame = document.getElementById("viz-frame");
+      if (!frame) return;
+      const nextHeight = Math.max(560, Math.min(1400, Number(event.data.height) || 780));
+      if (Math.abs(frame.offsetHeight - nextHeight) > 6) {
+        frame.style.height = `${nextHeight}px`;
+      }
+    });
+  </script>
+</body>
+</html>
