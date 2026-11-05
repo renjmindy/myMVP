@@ -1,0 +1,9 @@
+# Tested with Python 3.13 (needs Python 3.12 or newer because of numpy 2.5)
+numpy==2.5.4
+pillow==12.3.0
+opencv-python-headless==5.0.0.93
+matplotlib==3.11.2
+pytesseract==0.3.13
+fastapi==0.143.0
+uvicorn==0.54.0
+python-multipart==0.0.32
