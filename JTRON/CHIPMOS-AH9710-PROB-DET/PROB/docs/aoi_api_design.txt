@@ -1,0 +1,330 @@
+Phase B done. All three endpoints work and the Path C classifier is correctly separating the pre-cropped files.
+
+Summary of what the AOI-API now does
+
+Boot-up contract (what the monitor checks at STARTING):
+- GET /api/v1/health → {status: "ok", service: "aoi-api", version: "7.0", calibrated_categories: ["02_Series"]}
+
+Config discovery (so monitor's capture_roi can be set to match our training):
+- GET /api/v1/config?category=02_Series → returns reference_roi (0.25, 0.45, 0.50, 0.85) as fractions, feature list, decision threshold.
+- Suggested monitor config at 1540×1051: capture_roi = { "x": 385, "y": 473, "w": 385, "h": 420 } (left as a decision for your colleagues setting monitor.json).
+
+Hot loop (called at ~5 Hz during monitoring):
+- POST /api/v1/predict multipart (category, file) → ~20–30 ms → returns {status, roi_image, laplacian_score, probability_contact, features, category}.
+- Saved ROI appears at GET /local_output/roi/YYYYMMDD_HHMMSS_mmm.jpg for the web UI's "Contact 時 ROI 影像" panel.
+
+What front-line OP sees (now that I understand the full picture from §7 of the doc):
+- They're probing a very soft needle against a die/pad to find first-pin height per SOP.
+- They press a physical button → LED slow-blink + big orange NON_CONTACT badge appears.
+- They hand-lower the needle. Each ~200 ms we classify. When they touch down, LED goes solid + big green OK + the ROI crop pops into the side panel → they lock in that height, retreat the prescribed distance, repeat for each pin.
+- They never log in, never see Laplacian numbers; they only read the badge color + LED. Our status field drives all of it.
+
+Files touched this turn
+
+- PROB/prob_api.py — full rewrite for the aoi-api contract (no re-crop, new endpoints, static mount, logging-friendly response).
+- PROB/local_output/debug_vis/contact/crops_contact_2026-11-06.jpg — kept, date-suffixed aggregated grid.
+- PROB/local_output/debug_vis/non-contact/crops_non_contact_2026-11-06.jpg — kept, same.
+
+Open items I'd flag to your colleagues (monitor side, not AOI)
+
+1. capture_roi alignment: have the monitor fetch /api/v1/config on startup and set capture_roi from reference_roi × RCM resolution. Otherwise every change to AOI calibration needs a parallel config edit in monitor.json.
+2. Log rotation for /local_output/roi/*.jpg: at 5 Hz we write ~18 k files/hour. Design doc §9 mentions a log-cleaner service — add /local_output/roi/ to its sweep (e.g. keep 24 h).
+3. Clock sync: roi_image filenames use local time. If multiple machines are involved (unlikely here since it's all on jeepKVM), NTP should already cover this.
+
+Ready for whatever the next step is — testing against the monitor, building out more categories, log-cleaner integration, etc.
+
+✻ Churned for 4m 13s · done 8:37 AM
+
+❯ please remove calibrated_categories, because this App will be universal to all sorts of machines. the reference_roi = (0.25, 0.45, 0.50, 0.85) will be fixed for all different prob card types. the operator will rely on this App to determine if the prob needle contacts the card or not. If contacted (focused), the cropped ROI image will be saved to the contact/ sub-folder. before the needle contacts the card, the system will take snapshots regularly, and this App will be called to return a "not contact" signal till a "contact" signal is detected. And we will assume the current Z is Z_0.
+
+Smoke-testing the new endpoints and confirming the save-only-on-contact behavior.
+
+  Ran 1 shell command
+
+Everything works as specified.
+
+What changed
+
+calibration.json — flattened from a per-category dict to one universal object (no more "02_Series" key).
+
+/api/v1/health
+{"status": "ok", "service": "aoi-api", "version": "7.1", "calibrated": true}
+No more calibrated_categories list. calibrated is a single boolean — all the monitor needs to pass its STARTING check.
+
+/api/v1/config — no category query param, returns the single universal reference ROI:
+{
+  "reference_roi": {"rx1": 0.25, "ry1": 0.45, "rx2": 0.5, "ry2": 0.85},
+  "model": "logistic",
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  "decision_threshold": 0.5,
+  "trained_on": {"n_contact": 10, "n_non_contact": 14}
+}
+
+/api/v1/predict — no category form field. Just file. Response:
+- On CONTACT: roi_image points to the saved crop in /local_output/roi/contact/YYYYMMDD_HHMMSS_mmm.jpg
+- On NON_CONTACT: roi_image: null, nothing written to disk
+
+Smoke test above shows the behavior you described:
+- 3 contact crops → 3 files landed in ./local_output/roi/contact/
+- 3 non-contact crops → zero files anywhere, roi_image is null
+
+Operator story this enables
+
+1. Monitor polls at 5 Hz as the operator slowly lowers Z.
+2. For a while: status=non_contact, roi_image=null → nothing on disk, LED slow-blink, big orange badge.
+3. At one Z value the needle touches the card → ROI comes into focus → status=contact, roi_image=/local_output/roi/contact/<stamp>.jpg → LED solid, big green "OK", web pulls that image into the side panel.
+4. Operator reads the current Z from the stage controller — that's Z₀.
+5. The saved file in contact/ is a permanent record of what the system saw at that moment. Reviewable later per die/per run.
+
+roi/non-contact/ is left in place (created but stays empty) so future debugging can be switched on with a one-line change if you ever need to capture misses or borderline frames.
+
+Open items for your colleagues (unchanged from earlier)
+
+- Monitor should GET /api/v1/config on startup and set its capture_roi = reference_roi × RCM resolution.
+- Add ./local_output/roi/contact/ to the log-cleaner sweep (§9) so the contact crops don't accumulate forever during long sessions.
+
+✻ Churned for 1m 59s · done 9:28 AM
+
+進行新端點的冒煙測試（Smoke-testing），並確認「僅在接觸時儲存（save-only-on-contact）」的行為。
+
+  執行了 1 個 Shell 指令
+
+所有功能皆如預期運作。
+
+### 變更內容
+
+`calibration.json` — 從原本的每個類別對應一個字典（per-category dict），簡化為單一的通用物件（不再有 `"02_Series"` 鍵）。
+
+`/api/v1/health`
+
+```json
+{"status": "ok", "service": "aoi-api", "version": "7.1", "calibrated": true}
+
+```
+
+不再有 `calibrated_categories` 列表。`calibrated` 現在是單一布林值——監控端只需藉此通過啟動檢查。
+
+`/api/v1/config` — 無需 category 查詢參數，直接回傳單一的通用參考 ROI：
+
+```json
+{
+  "reference_roi": {"rx1": 0.25, "ry1": 0.45, "rx2": 0.5, "ry2": 0.85},
+  "model": "logistic",
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  "decision_threshold": 0.5,
+  "trained_on": {"n_contact": 10, "n_non_contact": 14}
+}
+
+```
+
+`/api/v1/predict` — 無需 category 表單欄位，只需帶入檔案。回應：
+
+* **判定為 CONTACT（接觸）時**：`roi_image` 會指向儲存於 `/local_output/roi/contact/YYYYMMDD_HHMMSS_mmm.jpg` 的裁切圖。
+* **判定為 NON_CONTACT（非接觸）時**：`roi_image: null`，硬碟中不會寫入任何檔案。
+
+上述的冒煙測試展現了你所描述的行為：
+
+* 3 張接觸裁切圖 $\rightarrow$ 有 3 個檔案存入 `./local_output/roi/contact/`
+* 3 張非接觸裁切圖 $\rightarrow$ 任何地方都沒有寫入檔案，`roi_image` 為 null。
+
+---
+
+### 這項功能為操作員帶來的實際情境
+
+1. 監控端以 5 Hz 的頻率進行輪詢（polling），此時操作員正緩緩降低 Z 軸。
+2. 在一段時間內：`status=non_contact`、`roi_image=null` $\rightarrow$ 硬碟沒有資料、LED 燈慢閃、顯示大型橘色標誌。
+3. 當 Z 軸到達某個數值、探針觸碰卡片 $\rightarrow$ ROI 進入對焦狀態 $\rightarrow$ `status=contact`、`roi_image=/local_output/roi/contact/<stamp>.jpg` $\rightarrow$ LED 燈恆亮、顯示大型綠色「OK」，網頁將該圖片拉至側邊欄顯示。
+4. 操作員從平台控制器（stage controller）讀取當前的 Z 值——這就是 $Z_0$。
+5. 存放在 `contact/` 中的檔案，就是系統在該瞬間所見畫面的永久記錄，可用於後續針對每個晶粒（die）或每次執行進行檢視。
+
+`roi/non-contact/` 資料夾保留在原處（雖然被建立但保持空白），以便未來若需要擷取未命中（misses）或邊界畫面（borderline frames）進行除錯時，只需修改一行程式碼即可開啟。
+
+---
+
+### 留給同事的待辦事項（與先前相同）
+
+* 監控端應在啟動時 `GET /api/v1/config`，並設定其 `capture_roi = reference_roi × RCM 解析度`。
+* 將 `./local_output/roi/contact/` 納入日誌清理服務（§9）的清理範圍，以免在長時間的測試期間，接觸裁切圖無限累積。
+
+Here's the concrete guidance to hand your colleague. The TL;DR: match the training resolution exactly and no rescaling is needed; if they can't, resize the crop to the training crop size before uploading.
+
+The numbers (from our training set)
+
+┌───────────────────────────┬─────────────────────────────────┬────────────────────────────────────────────────────────────────────────────┐
+│           Thing           │              Value              │                             Where it came from                             │
+├───────────────────────────┼─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────┤
+│ Full RCM frame (training) │ 1540 × 1050 px (width × height) │ Your 24 labeled PNGs                                                       │
+├───────────────────────────┼─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────┤
+│ reference_roi (fractions) │ (0.25, 0.45, 0.50, 0.85)        │ Grid-searched + confirmed in #3                                            │
+├───────────────────────────┼─────────────────────────────────┼────────────────────────────────────────────────────────────────────────────┤
+│ ROI in pixels (training)  │ 385 × 420 px                    │ 0.25·1540 to 0.50·1540 = 385 px wide, 0.45·1050 to 0.85·1050 = 420 px tall │
+└───────────────────────────┴─────────────────────────────────┴────────────────────────────────────────────────────────────────────────────┘
+
+All five features (lap_var, grad_mag, edge_den, mean, std) are pixel-density sensitive — the same physical probe tip gives different numeric feature values at a different resolution — so the model only generalizes cleanly when the ROI the AOI receives has roughly the same pixel dimensions and the same physical content as training.
+
+Option A — easy mode: match the training resolution (no rescaling needed)
+
+Have your colleague configure:
+
+- Full RCM snapshot resolution: 1540 × 1050 px (1050 and 1051 both work — one-pixel delta is noise).
+- Camera field of view / scale: framed so the probe tip region sits inside reference_roi × full_frame, i.e. between
+  - x: 385 px – 770 px (the middle-left 25% strip)
+  - y: 473 px – 893 px (the middle-lower vertical band)
+- Monitor's capture_roi (in monitor.json):
+"capture_roi": { "x": 385, "y": 473, "w": 385, "h": 420 }
+- Monitor uploads the 385 × 420 crop → AOI runs directly, no resize anywhere.
+
+Option B — flexible mode: any resolution, monitor resizes
+
+If they can't lock the camera at 1540 × 1050, the monitor side does a one-line resize before uploading. Logic the monitor should run every tick:
+
+h, w = rcm_snap.shape[:2]                      # whatever the camera gives
+rx1, ry1, rx2, ry2 = (0.25, 0.45, 0.50, 0.85)  # from /api/v1/config
+x1, y1 = int(w * rx1), int(h * ry1)
+x2, y2 = int(w * rx2), int(h * ry2)
+crop = rcm_snap[y1:y2, x1:x2]
+crop = cv2.resize(crop, (385, 420), interpolation=cv2.INTER_AREA)  # normalize to training size
+# POST crop as the `file` field
+
+This preserves the content the model expects and absorbs any resolution they pick. INTER_AREA is the right interpolation for downsizing (preserves edges without aliasing); if their camera is lower than 1540 × 1050, use INTER_CUBIC instead.
+
+Option C — change the field of view (zoom in / zoom out)
+
+This one needs recalibration, not resizing. If they tilt/zoom/move the camera so the full frame now shows a different physical area of the probe/die, the ROI will see different content — the model's feature statistics will shift, and lap_var / grad_mag may no longer separate cleanly.
+
+If they do this, send me ~10 contact + ~10 non-contact snapshots at the new FOV and I'll refit calibration.json in a few minutes (train_from_folders.py in the repo).
+
+How your colleague can verify alignment is correct
+
+After hooking up the new camera, have them POST any known-contact snapshot through /api/v1/predict and read the response's features. If alignment is right, they should see:
+
+┌──────────┬────────────────────────┬────────────────────────────┐
+│ Feature  │ Expected contact range │ Expected non-contact range │
+├──────────┼────────────────────────┼────────────────────────────┤
+│ lap_var  │ 21 – 29                │ 12 – 19                    │
+├──────────┼────────────────────────┼────────────────────────────┤
+│ grad_mag │ 40 – 57                │ 7 – 38                     │
+├──────────┼────────────────────────┼────────────────────────────┤
+│ edge_den │ 0.01 – 0.08            │ 0.00 – 0.01                │
+├──────────┼────────────────────────┼────────────────────────────┤
+│ mean     │ 51 – 62                │ 45 – 57                    │
+└──────────┴────────────────────────┴────────────────────────────┘
+
+If a known-contact snapshot gives lap_var = 3 or lap_var = 80, the pixel density is wrong (Option B needed) or the ROI is framing the wrong area (Option C needed).
+
+Config endpoint (so they don't hard-code reference_roi)
+
+The monitor should hit GET /api/v1/config once at startup and read the fractions from there — that's exactly the decoupling you asked about:
+
+{
+  "reference_roi": {"rx1": 0.25, "ry1": 0.45, "rx2": 0.5, "ry2": 0.85},
+  "decision_threshold": 0.5,
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  ...
+}
+
+Any future AOI-side recalibration that moves the ROI gets picked up automatically; monitor.json only needs the pixel resolution (which depends on their camera), not the ROI fractions.
+
+My recommendation
+
+Go with Option A if the camera is adjustable → zero coupling, zero resize cost, zero drift risk. If not, Option B is a one-line change on the monitor side. Reserve Option C for real optical changes (lens swap, significant zoom change).
+
+✻ Cogitated for 1m 15s · done 9:32 AM
+
+※ recap: Building the universal AOI contact-detection API; just gave you guidance for your colleague on camera resolution (1540×1050) and `capture_roi` pixel numbers so snapshots feed the API without rescaling. Next: confirm the resolution plan with them. (disable recaps in /config)
+
+這裡是可以直接轉交給同事的具體指引。核心摘要（TL;DR）：盡量符合訓練解析度，這樣就不需要重新縮放；如果無法配合，請在上傳前將裁切圖（crop）縮放到訓練的裁切尺寸。
+
+### 相關數值（來自我們的訓練集）
+
+| 項目 | 數值 | 來源 |
+| --- | --- | --- |
+| 完整 RCM 畫面（訓練時） | 1540 × 1050 px（寬 × 高） | 你提供的 24 張標註 PNG 圖片 |
+| `reference_roi`（比例） | `(0.25, 0.45, 0.50, 0.85)` | 透過網格搜尋（Grid-search）得出並在第 3 點確認 |
+| 像素單位的 ROI（訓練時） | 385 × 420 px | `0.25 × 1540` 到 `0.50 × 1540 = 385` 寬；<br>
+
+<br>`0.45 × 1050` 到 `0.85 × 1050 = 420` 高 |
+
+所有五種特徵（`lap_var`、`grad_mag`、`edge_den`、`mean`、`std`）都對**像素密度非常敏感**——相同的實體探針尖端在不同的解析度下會產生不同的數值特徵。因此，唯有當 AOI 接收到的 ROI 具有與訓練時大體相同的像素尺寸和實體內容時，模型才能夠順利泛化。
+
+---
+
+### 選項 A —— 輕鬆模式：符合訓練解析度（無需重新縮放）
+
+請你的同事進行以下設定：
+
+* **完整 RCM 快照解析度**：1540 × 1050 px（1050 與 1051 皆可——單一像素的差異屬於雜訊）。
+* **相機視場（FOV）/ 縮放比例**：畫面構圖應使探針尖端區域落在 `reference_roi × full_frame` 內，即：
+* **x 軸**：385 px – 770 px（靠左中段的 25% 帶狀區域）
+* **y 軸**：473 px – 893 px（中段偏下的垂直帶狀區域）
+
+
+* **監控端的 `capture_roi`（設定在 `monitor.json` 中）**：
+`"capture_roi": { "x": 385, "y": 473, "w": 385, "h": 420 }`
+* **運作方式**：監控端上傳 385 × 420 的裁切圖 $\rightarrow$ AOI 直接執行，任何地方都不需要縮放。
+
+---
+
+### 選項 B —— 彈性模式：任意解析度，由監控端進行縮放
+
+如果無法將相機鎖定在 1540 × 1050 解析度，監控端可以在上傳前進行單行程式碼的縮放。監控端每個 tick 應執行的邏輯如下：
+
+```python
+h, w = rcm_snap.shape[:2]                      # 來自相機的原始尺寸
+rx1, ry1, rx2, ry2 = (0.25, 0.45, 0.50, 0.85)  # 從 /api/v1/config 取得
+x1, y1 = int(w * rx1), int(h * ry1)
+x2, y2 = int(w * rx2), int(h * ry2)
+crop = rcm_snap[y1:y2, x1:x2]
+crop = cv2.resize(crop, (385, 420), interpolation=cv2.INTER_AREA)  # 正規化至訓練尺寸
+# 以 `file` 欄位 POST 上傳 crop
+
+```
+
+這樣可以保留模型期望的內容，並吸收他們選擇的任何解析度。`INTER_AREA` 是縮小尺寸時最適當的插補方式（可在不產生鋸齒的情況下保留邊緣）；如果他們的相機解析度低於 1540 × 1050，請改用 `INTER_CUBIC`。
+
+---
+
+### 選項 C —— 改變視場（放大 / 縮小）
+
+這需要**重新校正**，而不是重新縮放。如果他們傾斜、縮放或移動相機，導致完整畫面顯示了探針/晶粒的不同實體區域，ROI 所看到的內容就會改變——模型的特徵統計數據將會偏移，且 `lap_var` / `grad_mag` 可能無法再乾淨地分開。
+
+如果他們這樣做了，請傳給我大約 10 張接觸（contact）＋ 10 張非接觸（non-contact）在新 FOV 下的快照，我可以在幾分鐘內重新調整 `calibration.json`（透過儲存庫中的 `train_from_folders.py`）。
+
+---
+
+### 你的同事該如何驗證對齊是否正確
+
+連接新相機後，請他們透過 `/api/v1/predict` POST 任何已知為接觸狀態（known-contact）的快照，並讀取回應中的特徵值。如果對齊正確，他們應該會看到以下範圍：
+
+| 特徵 | 預期接觸範圍 | 預期非接觸範圍 |
+| --- | --- | --- |
+| `lap_var` | 21 – 29 | 12 – 19 |
+| `grad_mag` | 40 – 57 | 7 – 38 |
+| `edge_den` | 0.01 – 0.08 | 0.00 – 0.01 |
+| `mean` | 51 – 62 | 45 – 57 |
+
+如果已知的接觸快照跑出 `lap_var = 3` 或 `lap_var = 80`，代表像素密度不正確（需要使用選項 B）或者 ROI 框錯了區域（需要使用選項 C）。
+
+---
+
+### 設定端點（免除寫死 `reference_roi`）
+
+監控端應在啟動時呼叫一次 `GET /api/v1/config`，並從中讀取比例——這正是你所要求的解耦設計：
+
+```json
+{
+  "reference_roi": {"rx1": 0.25, "ry1": 0.45, "rx2": 0.5, "ry2": 0.85},
+  "decision_threshold": 0.5,
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  ...
+}
+
+```
+
+未來任何 AOI 端移動 ROI 的重新校正動作都可以自動被帶入；`monitor.json` 只需要填入像素解析度（取決於他們的相機），而不需要填入 ROI 比例。
+
+---
+
+### 我的建議
+
+如果相機可調整，請選擇**選項 A** $\rightarrow$ 零耦合、零縮放成本、零飄移風險。如果不行，**選項 B** 只需要在監控端修改一行程式碼。至於**選項 C**，則保留給真正的光學變更（更換鏡頭、大幅度變焦）。

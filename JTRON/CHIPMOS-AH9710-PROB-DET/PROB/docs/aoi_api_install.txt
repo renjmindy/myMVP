@@ -1,0 +1,334 @@
+Package ready. Here's what your colleagues get.
+
+Deliverable
+
+Path: /home/cjen/myMVP/JTRON/CHIPMOS-AH9710-PROB-DET/aoi-api-package.zip (1.2 MB, 15 files)
+
+aoi-api-package/
+├── prob_api.py                      # the FastAPI service
+├── local_output/
+│   └── calibration.json             # trained universal model (flat JSON)
+├── requirements.txt                 # fastapi / uvicorn / opencv / numpy / requests
+├── scan_batch.py                    # CLI — scans a folder, prints KPIs + decisions
+├── samples/
+│   ├── fullframe/                   # full 1540×1050 RCM screenshots
+│   │   ├── contact.png              #   → classifies "contact"     p≈0.914
+│   │   └── non_contact.png          #   → classifies "non_contact" p≈0.002
+│   └── precropped/                  # already-cropped ROIs (~385×420)
+│       ├── contact.jpg              #   → classifies "contact"     p≈0.885
+│       └── non_contact.jpg          #   → classifies "non_contact" p≈0.008
+├── README.md                        # markdown docs (10.6 kB)
+└── README.html                      # standalone dark-themed HTML docs (16.6 kB)
+
+What colleagues can do straight out of the zip
+
+unzip aoi-api-package.zip
+cd aoi-api-package
+pip install -r requirements.txt
+python prob_api.py          # service on :8000
+
+# in another terminal
+python scan_batch.py samples/fullframe/                      # full-frame mode (default)
+python scan_batch.py samples/precropped/ --precropped        # pre-cropped ROIs
+python scan_batch.py samples/fullframe/ --csv results.csv    # persist results
+
+Both demos are verified end-to-end — I booted the server + ran the scanner against both sample folders. The scanner prints a table per image with status, probability_contact, and all 5 feature KPIs (lap_var, grad_mag, edge_den, mean, std) plus a summary line, and optionally writes a CSV.
+
+Operator / decision contract (summarized in both READMEs)
+
+- Binary output: status = "contact" or "non_contact" (same strings the design-doc §5 uses).
+- On contact: ROI JPG is saved to ./local_output/roi/contact/YYYYMMDD_HHMMSS_mmm.jpg and roi_image returns the URL path (the design-doc "待確認 #1" — resolved as URL path served by the AOI's built-in static mount).
+- On non_contact: roi_image = null, nothing written.
+- All five Path-C features returned per request → colleagues can log them, chart drift over time, or build a confidence display.
+
+README coverage (both MD and HTML)
+
+1. What's in the package / layout
+2. Install + run (incl. the "start from the package root so ./local_output/calibration.json resolves" caveat we hit during testing)
+3. All three HTTP endpoints with concrete JSON examples
+4. scan_batch.py with 5 usage flavors (default, --precropped, --labeled for accuracy measurement, --csv, --url)
+5. How contact-monitor-service should call the API (Option A: match training resolution 1540×1050; Option B: any resolution + resize crop to 385×420) and expected feature ranges for a sanity check
+6. Feature reference + model weights
+7. When/how to recalibrate (new lens, new zoom)
+8. 待確認 items resolved: roi_image format, category removed, log rotation note
+9. Troubleshooting table (6 symptoms × cause × fix)
+
+✻ Worked for 8m 3s · done 12:54 PM
+
+Syncing the updated API into the package and smoke-testing with a round-trip.
+
+Works correctly now. Cleaning test crops and writing both READMEs in Traditional Chinese (jargon kept in English).
+
+Now writing the Traditional Chinese READMEs (code, endpoints, field names, and tool names stay in English).
+
+Rezipping with the new folder layout + Traditional Chinese READMEs.
+
+Package ready and overwritten.
+
+/home/cjen/myMVP/JTRON/CHIPMOS-AH9710-PROB-DET/aoi-api-package.zip (1.22 MB, 19 entries)
+
+What changed this round
+
+1. Folder layout — contact/ and non-contact/ are now directly under local_output/ (not under local_output/roi/):
+local_output/
+├── calibration.json
+├── contact/        ← saved ROI JPGs when status=contact
+└── non-contact/    ← saved ROI JPGs when status=non_contact
+   Both folders are pre-created in the zip (via .gitkeep) so they exist the moment the zip is unpacked.
+2. API now saves both classes — the web will still only display the contact crop (per design doc §7), but your team gets a full disk-level record of both for post-run review.
+3. Both READMEs rewritten in Traditional Chinese, jargon kept in English:
+   - Prose, section headings, table headers, tip boxes, 疑難排解 — all 繁體中文
+   - Kept English: endpoint paths (/api/v1/predict, /api/v1/health, /api/v1/config), field names (status, roi_image, laplacian_score, features, lap_var, grad_mag, edge_den, mean, std, probability_contact, reference_roi, decision_threshold, capture_roi), tool names (FastAPI, uvicorn, OpenCV, Canny, Sobel, Laplacian, logistic regression, L2), JSON, Python code, bash commands, HTTP method/codes, URLs
+4. StaticFiles mounts — two separate mounts (/local_output/contact and /local_output/non-contact), so calibration.json sitting beside them is not exposed publicly.
+
+Verified end-to-end
+
+- 4 test images → correct classifications, correct files landed in the right subfolders:
+  - local_output/contact/20261107_130519_393.jpg (full-frame contact)
+  - local_output/contact/20261107_130519_820.jpg (pre-cropped contact)
+  - local_output/non-contact/20261107_130519_435.jpg (full-frame non-contact)
+  - local_output/non-contact/20261107_130519_837.jpg (pre-cropped non-contact)
+- Avg latency ~16 ms on localhost.
+
+Colleagues can unzip and go — the fullframe + precropped sample folders each give them a one-command demo.
+
+✻ Baked for 5m 35s · done 1:09 PM
+
+※ recap: Building the AH9710 AOI-API for probe-contact detection. Just delivered `aoi-api-package.zip` (Traditional Chinese READMEs, universal model, saves ROIs into `local_output/contact/` and `local_output/non-contact/`). Next: waiting for your review or next instruction.
+
+I wanna double check with you. my colleague will adjust the size and resolution of screenshots using a program before these screenshots are sent to AOI API. then the cropped images will be saved in local_output for offline review
+
+Yes — that matches the current design exactly. Just to make the chain crystal-clear end-to-end:
+
+Flow
+
+RCM camera
+   │ snapshot (whatever resolution the colleague configures)
+   ▼
+contact-monitor-service  ← your colleague's program
+   │ 1. crop using capture_roi
+   │ 2. resize to 385×420 if needed (so model sees training geometry)
+   │ 3. POST /api/v1/predict  multipart file=<cropped-and-resized bytes>
+   ▼
+AOI API (prob_api.py)
+   │ 1. decode upload
+   │ 2. compute 5 features on it (NO further cropping)
+   │ 3. run logistic → status = "contact" / "non_contact"
+   │ 4. SAVE the exact uploaded image as JPG:
+   │       status="contact"     → ./local_output/contact/<timestamp>.jpg
+   │       status="non_contact" → ./local_output/non-contact/<timestamp>.jpg
+   │ 5. return JSON (status, roi_image URL, features, probability)
+   ▼
+monitor logs response, drives LED / Redis, debounces
+
+One thing worth being explicit about
+
+The file we save to local_output/contact/ or local_output/non-contact/ is the bytes we received — not a re-rendering. So:
+
+- If monitor resizes the crop to 385 × 420 before uploading (my recommendation), the saved offline-review file will be 385 × 420.
+- If monitor uploads an un-resized crop (any pixel size), the saved file will be at that larger size.
+
+For offline review a human can see detail better in a larger crop than a resized one. Two options, pick whichever your colleague prefers:
+
+1. Simple (what I set up): monitor resizes to 385 × 420, sends once. The saved offline file is 385 × 420. One upload per cycle, minimum bandwidth.
+2. Nicer for review: monitor sends the un-resized crop without cv2.resize. AOI still works IF the camera is already at 1540 × 1050 (Option A from §5 of the README, so the crop is natively 385 × 420). If camera is at a different resolution, feature values will drift — don't use this option without recalibration.
+
+So the cleanest setup is: colleague configures camera to 1540 × 1050, monitor crops with capture_roi = {x:385, y:473, w:385, h:420}, uploads the raw 385×420 crop (no resize step), and AOI saves that same 385×420 JPG into local_output/contact//non-contact/ for review.
+
+Volume reminder
+
+Polling at 5 Hz means roughly 18,000 JPGs/hour across both folders combined. The design doc's log-cleaner (§9) needs to sweep both ./local_output/contact/ and ./local_output/non-contact/ — otherwise disk fills up during a long run.
+
+If your colleague agrees with the above, nothing more to change — the current zip is what they need. If they'd rather use a different crop/resize strategy (e.g. larger ROI upload for review purposes), let me know and I'll adjust.
+
+✻ Brewed for 34s · done 1:28 PM
+
+Fully verified and shipped.
+
+Final deliverable
+
+/home/cjen/myMVP/JTRON/CHIPMOS-AH9710-PROB-DET/aoi-api-package.zip (1.16 MB, 15 entries)
+
+End-to-end confirmed (fresh v7.2 server round-trip)
+
+Direct curl on samples/contact.png returned:
+{
+  "status": "contact",
+  "roi_image": "/local_output/contact/cropped_20261107_141851_988.jpg",
+  "fullframe_image": "/local_output/contact/20261107_141851_988.jpg",
+  "laplacian_score": 24.25,
+  "probability_contact": 0.8824,
+  "features": { ... }
+}
+
+Saved to disk:
+- local_output/contact/20261107_141851_988.jpg — 220 KB, full 1540×1050 frame with blue ROI rectangle drawn on it (visually confirmed — the rectangle sits on the striped probe/pad region as expected)
+- local_output/contact/cropped_20261107_141851_988.jpg — 40 KB, raw 385×420 crop
+
+samples/non_contact.png routed correctly to local_output/non-contact/ with the same two-file pattern.
+
+Flow your colleagues implement (monitor side)
+
+RCM (1540×1050) → monitor fetches snapshot → POST /api/v1/predict file=<entire snapshot>
+                                            ↓
+                            AOI crops to 385×420 with reference_roi
+                            classifies via Path C logistic
+                            saves <timestamp>.jpg (original + blue overlay)
+                              and cropped_<timestamp>.jpg (just the 385×420)
+                              into local_output/<status>/
+                            returns { status, roi_image, fullframe_image, features, ... }
+
+Monitor side is trivial now — no cropping, no resizing, no overlay drawing. All of that is the AOI's job.
+
+Package layout (what gets unzipped)
+
+aoi-api-package/
+├── prob_api.py              # v7.2 — full-frame intake, two-file save, blue ROI overlay
+├── local_output/
+│   ├── calibration.json     # universal flat model
+│   ├── contact/             # saved JPG pairs land here on contact
+│   └── non-contact/         # saved JPG pairs land here on non_contact
+├── requirements.txt
+├── scan_batch.py            # CLI — forwards each file to AOI, prints KPI table + decision
+├── samples/
+│   ├── contact.png          # 1540×1050 RCM screenshot (contact)
+│   └── non_contact.png      # 1540×1050 RCM screenshot (non_contact)
+├── README.md                # Traditional Chinese, jargon kept in English
+└── README.html              # same content, standalone dark-themed HTML
+
+Reminder on operational volume
+
+At 5 Hz × 2 files/call = ~36 k files/hour, ~1 GB/hour. Log-cleaner (per design doc §9) needs to sweep both ./local_output/contact/ and ./local_output/non-contact/ — I've flagged this in §9 of the README and §6 (監控 → 儲存量估算).
+
+✻ Cooked for 3m 42s · done 2:19 PM
+
+※ recap: Goal: ship the AH9710 AOI-API package to your colleagues. The v7.2 zip at `/home/cjen/myMVP/JTRON/CHIPMOS-AH9710-PROB-DET/aoi-api-package.zip` is built and verified end-to-end. Next action: hand the zip to your colleagues and confirm the camera will be configured to 1540×1050. (disable recaps in /config)
+
+❯ verify the new zip contents
+
+Doing a thorough verification: unpack into a fresh dir, check every file is what it claims, then boot the service from the unpacked copy and run both demos.
+
+  Ran 10 shell commands
+
+False alarm — those "uvicorn" matches were my own bash processes. No actual uvicorn running. Verifying the zip.
+
+  Ran 4 shell commands
+
+Two things to double-check:
+1. The cropped_ prefix mention in README.html — grep failed because of HTML entity escaping.
+2. The non_contact.png dimensions (1591×1084 vs expected 1540×1050).
+
+  Ran 1 shell command
+
+Verification complete. Here's the report card.
+
+Verification summary — aoi-api-package.zip
+
+Contents (fresh unzip)
+
+aoi-api-package/
+├── README.html                        19,088 B  516f8ec3…  zh-Hant, 1365 CJK chars
+├── README.md                          12,769 B  95ef2599…  繁中, 1362 CJK chars
+├── prob_api.py                         7,692 B  e54e1751…  v7.2
+├── scan_batch.py                       6,567 B  1d19dc2b…  full-frame mode
+├── requirements.txt                       99 B  60242d1c…
+├── local_output/
+│   ├── calibration.json                  678 B  d4515d2c…  all keys present
+│   ├── contact/.gitkeep                    0 B
+│   └── non-contact/.gitkeep                0 B
+└── samples/
+    ├── contact.png                   714,587 B  8015a37d…  1540 × 1051
+    └── non_contact.png               453,181 B  4a51cf98…  1591 × 1084 (see note below)
+
+Code-content markers — all present
+
+┌───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬────────┐
+│                                                                 Check                                                                 │ Result │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ prob_api.py version 7.2                                                                                                               │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ Writes to CONTACT_DIR / NONCONTACT_DIR (= ./local_output/contact + ./local_output/non-contact)                                        │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ draw_roi_overlay() function present                                                                                                   │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ Response includes both roi_image and fullframe_image                                                                                  │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ Saves two files: <ts>.jpg + cropped_<ts>.jpg                                                                                          │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ StaticFiles mounts: /local_output/contact and /local_output/non-contact                                                               │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ calibration.json passes required-keys check                                                                                           │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ scan_batch.py prints "full-frame upload (API crops internally…)"                                                                      │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ scan_batch.py writes fullframe_image to CSV                                                                                           │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ README.md in Traditional Chinese (1362 CJK chars)                                                                                     │ ✓      │
+├───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼────────┤
+│ README.html lang=zh-Hant, 1365 CJK chars, documents blue overlay + fullframe_image + cropped_<timestamp>.jpg (HTML-escaped in source) │ ✓      │
+└───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴────────┘
+
+Live round-trip from the unpacked copy (port 8001)
+
+┌─────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────┐
+│                    Endpoint                     │                                     Result                                      │
+├─────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ GET /api/v1/health                              │ {"status":"ok","service":"aoi-api","version":"7.2","calibrated":true} ✓         │
+├─────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ GET /api/v1/config                              │ reference_roi, features, decision_threshold all correct ✓                       │
+├─────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ POST /api/v1/predict on samples/contact.png     │ status="contact", p=0.8824, both files saved to local_output/contact/ ✓         │
+├─────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ POST /api/v1/predict on samples/non_contact.png │ status="non_contact", p=0.0078, both files saved to local_output/non-contact/ ✓ │
+└─────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────┘
+
+Files produced during test (then cleaned up — package is clean again):
+- local_output/contact/20261107_165412_454.jpg (full-frame with blue ROI overlay)
+- local_output/contact/cropped_20261107_165412_454.jpg (385×420 crop)
+- local_output/non-contact/20261107_165412_516.jpg (full-frame with blue overlay)
+- local_output/non-contact/cropped_20261107_165412_516.jpg (385×420 crop)
+
+One benign note
+
+samples/non_contact.png is 1591 × 1084 instead of the documented 1540 × 1050. That's the raw screenshot you provided from the colleague's data — I didn't crop or resize it. It still classifies correctly because the API crops by fraction, not absolute pixels — so any reasonably-sized full frame works. The 1540 × 1050 recommendation in the README is only for minimizing feature drift in production, not a hard requirement for test samples.
+
+If you want the sample files to be strictly 1540 × 1050 to match the docs, say the word and I'll resize them + re-zip. Otherwise the package is good to hand off.
+
+✻ Crunched for 2m 36s · done 4:55 PM
+
+────────────────────────────────────────────────────────────────────── 1 new message ───────────────────────────────────────────────────────────────────────
+
+※ recap: Goal: ship the AOI contact-detection API package to your colleagues. Current state: `aoi-api-package.zip` is built, verified end-to-end, and sits at the project root. Next action: hand the zip to them. (disable recaps in /config)
+
+❯ resize non_contact.png to 1540x1050 and re-zip
+
+  Ran 1 shell command
+
+Now verifying the resized sample still classifies correctly, then re-zipping.
+
+  Ran 1 shell command
+
+Spotted a leftover: __pycache__/prob_api.cpython-313.pyc got regenerated by the test-boot and ended up in the zip. Cleaning + re-zipping.
+
+  Ran 1 shell command
+
+Clean. Here's the final state.
+
+aoi-api-package.zip (1.22 MB, 15 entries) — refreshed
+
+What changed: samples/non_contact.png resized from 1591 × 1084 → 1540 × 1050, matching the documented training resolution. Stray __pycache__ scrubbed and prevented from re-entering the zip via -x '*__pycache__*' -x '*.pyc'.
+
+Both samples now at training resolution
+
+- samples/contact.png → 1540 × 1051
+- samples/non_contact.png → 1540 × 1050
+
+Classification still correct after resize (from live round-trip)
+
+- contact.png → status=contact, p=0.8824, lap_var=24.25 ✓
+- non_contact.png (resized) → status=non_contact, p=0.0016, lap_var=11.68 ✓
+  (Previously p=0.0078 at 1591 × 1084 — resize slightly shifted features but still well within non-contact range.)
+
+Zip now contains only the 15 expected entries — no pycache, no stray JPGs in local_output/contact/ or local_output/non-contact/.
+
+Package is ready to hand off.

@@ -1,0 +1,950 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Contact Monitor 設計</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #d7dce3;
+  --text: #1b2430; --muted: #5b6676; --accent: #0b6e8a; --accent-soft: #e2f1f5;
+  --ok: #1f8a4c; --ok-soft: #e3f4ea; --warn: #b26a00; --warn-soft: #fbf0dc;
+  --err: #c23a3a; --err-soft: #f9e4e4; --idle: #6b7280; --idle-soft: #eceef1;
+  --code-bg: #0f1720; --code-text: #d7e2ee;
+  --screen: #0b0f0e; --teal: #3fa79a;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+    --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+    --ok: #4cc07c; --ok-soft: #143222; --warn: #e3a23a; --warn-soft: #3a2a10;
+    --err: #ec6b6b; --err-soft: #3b1919; --idle: #9aa3ae; --idle-soft: #232b35;
+    --code-bg: #0a0f14; --code-text: #d7e2ee;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+  --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+  --ok: #4cc07c; --ok-soft: #143222; --warn: #e3a23a; --warn-soft: #3a2a10;
+  --err: #ec6b6b; --err-soft: #3b1919; --idle: #9aa3ae; --idle-soft: #232b35;
+  --code-bg: #0a0f14; --code-text: #d7e2ee;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 28px; margin: 0 0 6px; }
+h2 { font-size: 21px; margin: 48px 0 12px; padding-top: 8px; }
+h3 { font-size: 16px; margin: 24px 0 8px; }
+p { margin: 8px 0; }
+.lead { color: var(--muted); margin: 0 0 20px; }
+.meta { color: var(--muted); font-size: 13px; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 18px 0 8px; font-size: 14px; }
+nav.toc a { color: var(--accent); text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.grid3 > *, .grid2 > *, .mock-body > * { min-width: 0; }
+@media (max-width: 760px) { .grid3, .grid2 { grid-template-columns: 1fr; } }
+.card h3 { margin-top: 0; }
+.tag { display: inline-block; font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+pre code { font-size: 12.5px; line-height: 1.55; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+.note.warn { border-color: var(--warn); background: var(--warn-soft); }
+.diagram { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px; overflow-x: auto; }
+.diagram svg { display: block; width: 100%; min-width: 720px; height: auto; }
+.diagram svg text { fill: var(--text); font-family: system-ui, "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+.diagram .box { fill: var(--surface-2); stroke: var(--border); stroke-width: 1.5; }
+.diagram .box.svc { fill: var(--accent-soft); stroke: var(--accent); }
+.diagram .box.ext { fill: var(--surface); stroke: var(--muted); stroke-dasharray: 5 4; }
+.diagram .box.hw { fill: var(--warn-soft); stroke: var(--warn); }
+.diagram .t1 { font-size: 15px; font-weight: 700; }
+.diagram .t2 { font-size: 12px; fill: var(--muted); }
+.diagram .lbl { font-size: 11.5px; fill: var(--muted); }
+.diagram .ln { stroke: var(--muted); stroke-width: 1.6; fill: none; }
+.diagram .ln.acc { stroke: var(--accent); }
+.diagram .life { stroke: var(--border); stroke-width: 1.5; stroke-dasharray: 4 4; }
+.diagram .ah { fill: var(--muted); }
+.diagram .ah.acc { fill: var(--accent); }
+.legend { font-size: 13px; color: var(--muted); margin-top: 6px; }
+ol.steps { padding-left: 22px; } ol.steps li { margin: 4px 0; }
+.pill { display: inline-block; font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 6px; font-family: ui-monospace, Consolas, monospace; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.err { background: var(--err-soft); color: var(--err); }
+.pill.idle { background: var(--idle-soft); color: var(--idle); }
+
+/* LED 示意 */
+.led { display: inline-block; width: 14px; height: 14px; border-radius: 50%; background: #3a3a3a; vertical-align: -2px; margin-right: 6px; box-shadow: inset 0 0 0 1px rgba(0,0,0,.25); }
+.led.on { background: #ffb020; box-shadow: 0 0 8px #ffb020; }
+.led.slow { animation: blink 1s steps(1) infinite; }
+.led.fast { animation: blink .2s steps(1) infinite; }
+@keyframes blink { 0% { background: #ffb020; box-shadow: 0 0 8px #ffb020; } 50% { background: #3a3a3a; box-shadow: none; } }
+@media (prefers-reduced-motion: reduce) { .led.slow, .led.fast { animation: none; background: #ffb020; opacity: .6; } }
+
+/* UI mockup */
+.mock-switch { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
+.mock-switch button { font: inherit; font-size: 13px; border: 1px solid var(--border); background: var(--surface); color: var(--text); padding: 5px 12px; border-radius: 99px; cursor: pointer; }
+.mock-switch button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: #fff; }
+.mock { background: #11161c; color: #e6edf3; border-radius: 12px; border: 1px solid #263240; overflow: hidden; font-size: 14px; }
+.mock-top { display: flex; align-items: center; justify-content: space-between; padding: 10px 16px; background: #0b1016; border-bottom: 1px solid #263240; gap: 10px; flex-wrap: wrap; }
+.mock-top .brand { font-weight: 700; letter-spacing: .3px; }
+.mock-top .brand-wrap { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.mock-top .logo { display: block; height: 30px; width: auto; background: #fff; border-radius: 6px; padding: 3px 8px; }
+.mock-top .conn { font-size: 12px; color: #8b98a8; display: flex; gap: 12px; flex-wrap: wrap; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #46c47a; margin-right: 4px; }
+.mock-body { display: grid; grid-template-columns: 1fr 300px; gap: 14px; padding: 14px; }
+@media (max-width: 760px) { .mock-body { grid-template-columns: 1fr; } }
+.live { position: relative; background: var(--screen); border: 2px solid var(--teal); border-radius: 4px; aspect-ratio: 1148 / 860; overflow: hidden; }
+.live img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.live .ph { position: absolute; inset: 0; display: grid; place-items: center; color: #6b7785; font-size: 13px; }
+.live .badge { position: absolute; top: 10px; right: 12px; font-weight: 800; font-size: 30px; letter-spacing: 1px; padding: 0 12px; border-radius: 6px; background: rgba(0,0,0,.55); line-height: 1.4; }
+.live .fps { position: absolute; left: 10px; bottom: 8px; font-size: 11px; color: #8b98a8; background: rgba(0,0,0,.5); padding: 1px 6px; border-radius: 4px; font-family: ui-monospace, Consolas, monospace; }
+.side { display: flex; flex-direction: column; gap: 12px; }
+.panel { background: #0b1016; border: 1px solid #263240; border-radius: 8px; padding: 12px; }
+.panel .k { font-size: 12px; color: #8b98a8; }
+.panel .v { font-size: 20px; font-weight: 700; }
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.big-btn { width: 100%; font: inherit; font-size: 16px; font-weight: 700; padding: 12px; border-radius: 8px; border: 0; cursor: pointer; color: #fff; }
+.big-btn.start { background: #1f8a4c; }
+.big-btn.stop { background: #c23a3a; }
+.big-btn:disabled { background: #3a4654; color: #b8c3cf; cursor: progress; }
+.roi { aspect-ratio: 4 / 3; background: #05080a; border: 1px dashed #33404e; border-radius: 6px; display: grid; place-items: center; color: #6b7785; font-size: 12px; overflow: hidden; }
+.roi img { width: 100%; height: 100%; object-fit: cover; }
+.log { margin: 0 14px 14px; background: #0b1016; border: 1px solid #263240; border-radius: 8px; padding: 8px 12px; font-family: ui-monospace, Consolas, monospace; font-size: 12px; color: #a9b6c4; max-height: 120px; overflow: auto; }
+.log div { white-space: nowrap; }
+.gear { color: #cfe3ea; border: 1px solid #33404e; border-radius: 6px; padding: 0 8px; }
+.c-ok { color: #46c47a; } .c-warn { color: #e3a23a; } .c-err { color: #ec6b6b; } .c-idle { color: #9aa3ae; }
+.callouts { margin: 10px 0 0; padding-left: 20px; font-size: 14px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>AH9710 Contact Monitor — POC 設計</h1>
+<p class="lead">主鏡頭（RCM 影像）+ AOI 判定針尖是否接觸 Tape，以實體按鈕 / LED 及網頁同步操作與顯示。</p>
+<p class="meta">版本 0.4（草案） · 2026-11-06 · JTRON · v0.4：確定網頁可重啟服務、RCM 密碼加密保存、日誌與 log-cleaner 配合、監控畫面不需登入；目錄改用 JEEP 慣例</p>
+
+<nav class="toc" aria-label="目錄">
+  <a href="#summary">1. 概要</a><a href="#naming">2. 命名</a><a href="#arch">3. 系統架構</a>
+  <a href="#panel">4. panel-io-service</a><a href="#monitor">5. contact-monitor-service</a>
+  <a href="#sync">6. Redis 與狀態同步</a><a href="#ui">7. 監控畫面</a><a href="#settings">8. 系統設定</a>
+  <a href="#logging">9. 日誌機制</a><a href="#config">10. 設定檔</a><a href="#open">11. 決定與待確認</a>
+</nav>
+
+<!-- ============================================================ -->
+<h2 id="summary">1. 概要</h2>
+<p>依客戶 SOP 找 first pin 高度時，OP 會「下壓 → 接觸 → 後退規定距離 → 再下壓」反覆進行。因此啟動監控後，AOI 判定會一直在 <span class="pill ok">CONTACT</span> ⇄ <span class="pill warn">NON_CONTACT</span> 之間循環，直到再按一次按鈕停止監控。</p>
+<div class="grid3">
+  <div class="card">
+    <span class="tag">服務 1</span>
+    <h3>panel-io-service</h3>
+    <p>操作面板 IO 服務。TCP Server，回報按鈕事件、依指令切換 LED 模式。POC 用 UART0 的兩支腳（GPIO14 按鈕 / GPIO15 LED），之後換成有 SoC 的 UART 面板時只要換驅動層。</p>
+  </div>
+  <div class="card">
+    <span class="tag">服務 2</span>
+    <h3>contact-monitor-service</h3>
+    <p>監控邏輯服務，也是<strong>唯一的狀態擁有者</strong>。接收按鈕 / 網頁指令，從 RCM 取像、依 ROI 裁切、依設定頻率送 AOI-API 判定，再更新 LED 和 Redis 狀態。</p>
+  </div>
+  <div class="card">
+    <span class="tag">UI</span>
+    <h3>contact-monitor-web</h3>
+    <p>網頁後端與前端。顯示藍綠色框範圍的即時影像、大字狀態（類似影片中的 OK）、Contact 時的 ROI 影像，以及開始 / 停止按鈕。只送指令、只讀狀態。另提供需登入的<strong>系統設定</strong>，修改後經確認才寫入並重啟相關服務。</p>
+  </div>
+</div>
+<p>三個服務共用同一套<strong>日誌模組</strong>：存放位置、檔案大小切割、命名格式、Log level 都可設定，每次啟動都會記錄 <code>SERVICE_STARTED</code>（見 <a href="#logging">第 9 節</a>）。</p>
+
+<!-- ============================================================ -->
+<h2 id="naming">2. 命名一覽</h2>
+<div class="table-wrap"><table>
+  <tr><th>類別</th><th>名稱</th><th>說明</th></tr>
+  <tr><td>服務</td><td><code>panel-io-service</code></td><td>操作面板 IO（按鈕 + LED）TCP Server，暫定 port <code>57310</code></td></tr>
+  <tr><td>服務</td><td><code>contact-monitor-service</code></td><td>監控邏輯 + 狀態機，TCP Client 連 panel-io-service</td></tr>
+  <tr><td>服務</td><td><code>contact-monitor-web</code></td><td>網頁後端（REST + SSE + 影像轉送）與前端頁面，暫定 port <code>8010</code></td></tr>
+  <tr><td>外部</td><td><code>aoi-api</code></td><td>同事的 AOI 服務（修改中），判定 contact / non contact</td></tr>
+  <tr><td>外部</td><td><code>RCM</code>（JEEP KVM）</td><td><code>/api/streamer/snapshot</code>、<code>/api/streamer/stream</code>，Basic Auth</td></tr>
+  <tr><td>驅動介面</td><td><code>PanelDriver</code></td><td><code>GpioPanelDriver</code>（POC）/ <code>UartPanelDriver</code>（未來 SoC 面板）</td></tr>
+  <tr><td>按鈕事件</td><td><code>BUTTON_PRESSED</code></td><td>panel-io → monitor：<code>{button: "monitor", gesture: "short"}</code></td></tr>
+  <tr><td>LED 模式</td><td><code>LED_ON</code> / <code>LED_BLINK_SLOW</code> / <code>LED_OFF</code> / <code>LED_BLINK_FAST</code></td><td>Contact / 監控中 Non Contact / 未監控 / 異常（建議新增）</td></tr>
+  <tr><td>指令</td><td><code>START_MONITOR</code> / <code>STOP_MONITOR</code> / <code>TOGGLE_MONITOR</code></td><td>網頁送 START / STOP；實體按鈕由 monitor 服務轉成 TOGGLE</td></tr>
+  <tr><td>監控狀態</td><td><code>IDLE</code> / <code>STARTING</code> / <code>MONITORING</code> / <code>ERROR</code></td><td><code>monitor_state</code></td></tr>
+  <tr><td>判定狀態</td><td><code>UNKNOWN</code> / <code>CONTACT</code> / <code>NON_CONTACT</code></td><td><code>contact_state</code>，只在 MONITORING 時有意義</td></tr>
+  <tr><td>Redis</td><td><code>contact:monitor:state</code></td><td>HASH，目前狀態（只有 contact-monitor-service 會寫）</td></tr>
+  <tr><td>Redis</td><td><code>contact:monitor:cmd</code></td><td>STREAM，網頁送出的指令佇列</td></tr>
+  <tr><td>Redis</td><td><code>contact:monitor:events</code></td><td>PUB/SUB，狀態變更通知（完整狀態 JSON）</td></tr>
+  <tr><td>ROI</td><td><code>capture_roi</code> / <code>display_roi</code></td><td>送 AOI 的裁切範圍 / 網頁顯示的範圍（藍綠色框），像素座標</td></tr>
+  <tr><td>systemd</td><td><code>contact-panel-io</code> / <code>contact-monitor</code> / <code>contact-monitor-web</code></td><td>三個服務的 unit 名稱，系統設定套用後以此重啟</td></tr>
+  <tr><td>設定檔</td><td><code>/opt/jtron/jeep/config/contact-monitor/</code></td><td><code>common.json</code>、<code>panel-io.json</code>、<code>monitor.json</code>、<code>web.json</code>；備份在 <code>config/backup/</code></td></tr>
+  <tr><td>日誌模組</td><td><code>jtron_log</code></td><td>三個服務共用的 Python 日誌模組（大小切割、命名格式、保留天數）</td></tr>
+  <tr><td>日誌事件</td><td><code>SERVICE_STARTED</code> / <code>SERVICE_STOPPED</code> / <code>CONFIG_CHANGED</code> …</td><td>每行日誌的事件代碼，完整列表見第 9 節</td></tr>
+  <tr><td>Redis</td><td><code>contact:service:&lt;name&gt;</code></td><td>HASH，各服務的心跳與啟動資訊，系統設定頁用來確認重啟成功</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="arch">3. 系統架構</h2>
+<div class="diagram" role="img" aria-label="系統架構圖：panel-io-service 與 contact-monitor-service 以 TCP 連線；contact-monitor-service 從 RCM 取像、送 AOI-API，並透過 Redis 與 contact-monitor-web 同步；網頁後端轉送 RCM 影像串流給瀏覽器">
+<svg viewBox="0 0 980 560" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah acc"/></marker>
+  </defs>
+  <!-- jeepKVM 範圍 -->
+  <rect x="10" y="150" width="620" height="400" rx="12" fill="none" stroke="var(--border)" stroke-width="1.5" stroke-dasharray="2 5"/>
+  <text x="24" y="172" class="lbl">jeepKVM（POC 部署主機，沿用現有 Redis :6379）</text>
+
+  <!-- 硬體面板 -->
+  <rect x="30" y="30" width="190" height="80" rx="10" class="box hw"/>
+  <text x="125" y="62" text-anchor="middle" class="t1">操作面板（POC）</text>
+  <text x="125" y="84" text-anchor="middle" class="t2">按鈕 GPIO14 · LED GPIO15</text>
+
+  <!-- panel-io-service -->
+  <rect x="30" y="230" width="190" height="120" rx="10" class="box svc"/>
+  <text x="125" y="262" text-anchor="middle" class="t1">panel-io-service</text>
+  <text x="125" y="284" text-anchor="middle" class="t2">TCP Server :57310</text>
+  <text x="125" y="304" text-anchor="middle" class="t2">PanelDriver</text>
+  <text x="125" y="322" text-anchor="middle" class="t2">GPIO → 未來 UART</text>
+
+  <!-- contact-monitor-service -->
+  <rect x="320" y="215" width="260" height="150" rx="10" class="box svc"/>
+  <text x="450" y="247" text-anchor="middle" class="t1">contact-monitor-service</text>
+  <text x="450" y="271" text-anchor="middle" class="t2">狀態機（唯一狀態擁有者）</text>
+  <text x="450" y="291" text-anchor="middle" class="t2">取像 → capture_roi 裁切</text>
+  <text x="450" y="311" text-anchor="middle" class="t2">→ AOI 判定（aoi.interval_ms）</text>
+  <text x="450" y="331" text-anchor="middle" class="t2">→ LED 模式 + Redis 狀態</text>
+
+  <!-- Redis -->
+  <rect x="320" y="440" width="260" height="90" rx="10" class="box"/>
+  <text x="450" y="470" text-anchor="middle" class="t1">Redis</text>
+  <text x="450" y="492" text-anchor="middle" class="t2">contact:monitor:state / :cmd</text>
+  <text x="450" y="511" text-anchor="middle" class="t2">contact:monitor:events</text>
+
+  <!-- RCM -->
+  <rect x="690" y="30" width="270" height="80" rx="10" class="box ext"/>
+  <text x="825" y="62" text-anchor="middle" class="t1">RCM（JEEP KVM）</text>
+  <text x="825" y="84" text-anchor="middle" class="t2">/api/streamer/snapshot · stream</text>
+
+  <!-- AOI -->
+  <rect x="690" y="165" width="270" height="80" rx="10" class="box ext"/>
+  <text x="825" y="197" text-anchor="middle" class="t1">aoi-api</text>
+  <text x="825" y="219" text-anchor="middle" class="t2">contact / non contact + ROI 影像</text>
+
+  <!-- web -->
+  <rect x="690" y="330" width="270" height="90" rx="10" class="box svc"/>
+  <text x="825" y="362" text-anchor="middle" class="t1">contact-monitor-web</text>
+  <text x="825" y="384" text-anchor="middle" class="t2">REST · SSE · 影像轉送 :8010</text>
+  <text x="825" y="403" text-anchor="middle" class="t2">監控畫面 · 系統設定（登入）</text>
+
+  <!-- browser -->
+  <rect x="690" y="470" width="270" height="60" rx="10" class="box"/>
+  <text x="825" y="506" text-anchor="middle" class="t1">瀏覽器 UI</text>
+
+  <!-- lines -->
+  <line x1="125" y1="110" x2="125" y2="228" class="ln" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="135" y="135" class="lbl">GPIO 電位</text>
+
+  <line x1="222" y1="272" x2="318" y2="272" class="ln acc" marker-end="url(#b)"/>
+  <text x="228" y="263" class="lbl">BUTTON_PRESSED</text>
+  <line x1="318" y1="310" x2="222" y2="310" class="ln acc" marker-end="url(#b)"/>
+  <text x="240" y="328" class="lbl">SET_LED</text>
+  <text x="228" y="350" class="lbl">TCP · JSON lines</text>
+
+  <path d="M520,213 L520,70 L688,70" class="ln" marker-end="url(#a)"/>
+  <text x="530" y="140" class="lbl">1. snapshot（Basic Auth）</text>
+
+  <path d="M582,240 L688,210" class="ln" marker-end="url(#a)"/>
+  <text x="596" y="252" class="lbl">2. ROI 影像</text>
+
+  <line x1="430" y1="367" x2="430" y2="438" class="ln" marker-end="url(#a)"/>
+  <text x="340" y="398" class="lbl">寫 state</text>
+  <text x="340" y="414" class="lbl">+ PUBLISH</text>
+  <line x1="470" y1="438" x2="470" y2="367" class="ln" marker-end="url(#a)"/>
+  <text x="478" y="406" class="lbl">讀 cmd</text>
+
+  <path d="M582,470 L640,470 L640,395 L688,395" class="ln" marker-end="url(#a)"/>
+  <text x="590" y="462" class="lbl">events</text>
+  <path d="M688,410 L655,410 L655,500 L582,500" class="ln" marker-end="url(#a)"/>
+  <text x="592" y="522" class="lbl">XADD cmd</text>
+
+  <path d="M962,70 L975,70 L975,375 L962,375" class="ln" marker-end="url(#a)"/>
+  <text x="968" y="225" class="lbl" transform="rotate(90 968 225)">MJPEG 影像串流</text>
+
+  <line x1="825" y1="422" x2="825" y2="468" class="ln" marker-start="url(#a)" marker-end="url(#a)"/>
+  <text x="835" y="450" class="lbl">HTTP + SSE</text>
+</svg>
+</div>
+<p class="legend">實線藍色為 POC 新設計的 TCP 介面；虛線框為外部系統。即時影像不經過 contact-monitor-service，由網頁後端直接轉送 RCM 串流，避免監控服務被影像串流拖慢。</p>
+
+<h3>設計重點</h3>
+<ul>
+  <li><strong>只有一個狀態擁有者。</strong> 實體按鈕和網頁按鈕最後都送到 contact-monitor-service，由它決定開始 / 停止，再同時更新 LED 和 Redis，兩邊自然同步。</li>
+  <li><strong>panel-io-service 不記狀態。</strong> 它只回報「哪顆按鈕被怎麼按」，以及照指令亮燈。之後換成多按鈕、多燈號的 UART 面板時，只要改驅動層和按鈕對照表，監控邏輯不用動。</li>
+  <li><strong>網頁不寫狀態。</strong> 網頁只送指令並等狀態回報，從根本避免 hid-status-manager「網頁先切、又被 Redis 舊狀態切回」的問題（見 <a href="#sync">第 6 節</a>）。</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="panel">4. panel-io-service（操作面板 IO 服務）</h2>
+<div class="grid2">
+  <div>
+    <h3>職責</h3>
+    <ul>
+      <li>按鈕去彈跳後判斷手勢（短按 / 長按），送出 <code>BUTTON_PRESSED</code>。</li>
+      <li>依 <code>SET_LED</code> 指令執行燈號模式，閃爍節奏由本服務自行產生。</li>
+      <li>心跳檢查：超過 5 秒沒收到 contact-monitor-service 的 <code>ping</code>，LED 自動關閉（fail-safe）。</li>
+      <li>重新連線時先送 <code>hello</code>，contact-monitor-service 收到後重送目前的 LED 模式。</li>
+    </ul>
+  </div>
+  <div>
+    <h3>LED 模式</h3>
+    <div class="table-wrap"><table>
+      <tr><th>模式</th><th>示意</th><th>使用時機</th></tr>
+      <tr><td><code>LED_OFF</code></td><td><span class="led"></span>熄滅</td><td>未監控（IDLE）</td></tr>
+      <tr><td><code>LED_BLINK_SLOW</code></td><td><span class="led slow"></span>1 Hz 慢閃</td><td>監控中，Non Contact / 尚未判定</td></tr>
+      <tr><td><code>LED_ON</code></td><td><span class="led on"></span>恆亮</td><td>監控中，Contact</td></tr>
+      <tr><td><code>LED_BLINK_FAST</code></td><td><span class="led fast"></span>5 Hz 快閃</td><td>異常（建議新增：取像或 AOI 失敗）</td></tr>
+    </table></div>
+  </div>
+</div>
+
+<h3>TCP 協定（JSON lines，一行一則訊息）</h3>
+<pre><code># panel-io-service → contact-monitor-service
+{"type":"hello","service":"panel-io-service","version":"0.1","driver":"gpio","buttons":["monitor"],"leds":["status"]}
+{"type":"button_pressed","button":"monitor","gesture":"short","ts":"2026-11-06T10:15:02.118+08:00"}
+{"type":"ack","id":42,"ok":true}
+{"type":"pong"}
+
+# contact-monitor-service → panel-io-service
+{"type":"set_led","id":42,"led":"status","mode":"LED_ON"}
+{"type":"ping"}</code></pre>
+
+<h3>驅動介面（換硬體時只改這一層）</h3>
+<pre><code>class PanelDriver:
+    def buttons(self) -> list[str]: ...           # POC: ["monitor"]；SoC 面板可有多顆
+    def leds(self) -> list[str]: ...              # POC: ["status"]
+    def poll_buttons(self) -> list[ButtonEvent]: ...
+    def set_led(self, led: str, mode: str): ...   # GPIO 版自己產生閃爍；UART 版直接送指令給 SoC
+
+GpioPanelDriver   # POC：GPIO14 按鈕 / GPIO15 LED
+UartPanelDriver   # 未來：UART 指令控制多按鈕、多 LED</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="monitor">5. contact-monitor-service（監控邏輯服務）</h2>
+<h3>監控流程</h3>
+<ol class="steps">
+  <li>收到 <code>START_MONITOR</code>（網頁）或 <code>BUTTON_PRESSED</code>（轉成 <code>TOGGLE_MONITOR</code>）。</li>
+  <li>進入 <code>STARTING</code>：確認 RCM 有影像訊號、aoi-api 可連線。成功 → <code>MONITORING</code>；失敗 → <code>ERROR</code>。</li>
+  <li>每 <code>aoi.interval_ms</code> 一輪：向 RCM 取 snapshot 原圖 → 依 <code>capture_roi</code>（x, y, w, h）裁切 → 上傳 aoi-api。</li>
+  <li>aoi-api 回傳 <code>contact</code> / <code>non_contact</code> 和 ROI 影像路徑；連續 <code>debounce_count</code> 次相同才改變 <code>contact_state</code>。</li>
+  <li>狀態改變時：送 <code>SET_LED</code> 給 panel-io-service、寫入 Redis 並 PUBLISH。每次 NON_CONTACT → CONTACT，<code>contact_count</code> 加 1。</li>
+  <li>持續 CONTACT ⇄ NON_CONTACT 循環，直到收到 <code>STOP_MONITOR</code> / 再按一次按鈕 → <code>IDLE</code>、<code>LED_OFF</code>。</li>
+</ol>
+
+<h3>狀態機</h3>
+<div class="diagram" role="img" aria-label="狀態機：IDLE 收到開始指令進入 STARTING，檢查成功進入 MONITORING，MONITORING 內 UNKNOWN、NON_CONTACT、CONTACT 互相切換；異常進入 ERROR；任何狀態收到停止指令回到 IDLE">
+<svg viewBox="0 0 980 310" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="s" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+  </defs>
+  <rect x="20" y="105" width="130" height="64" rx="32" class="box"/>
+  <text x="85" y="134" text-anchor="middle" class="t1">IDLE</text>
+  <text x="85" y="154" text-anchor="middle" class="t2">LED_OFF</text>
+
+  <rect x="210" y="105" width="140" height="64" rx="32" class="box"/>
+  <text x="280" y="134" text-anchor="middle" class="t1">STARTING</text>
+  <text x="280" y="154" text-anchor="middle" class="t2">LED_BLINK_SLOW</text>
+
+  <rect x="410" y="30" width="420" height="220" rx="14" class="box svc"/>
+  <text x="430" y="54" class="t1">MONITORING</text>
+  <rect x="440" y="110" width="150" height="56" rx="28" class="box"/>
+  <text x="515" y="134" text-anchor="middle" class="t1">NON_CONTACT</text>
+  <text x="515" y="153" text-anchor="middle" class="t2">LED_BLINK_SLOW</text>
+  <rect x="660" y="110" width="150" height="56" rx="28" class="box"/>
+  <text x="735" y="134" text-anchor="middle" class="t1">CONTACT</text>
+  <text x="735" y="153" text-anchor="middle" class="t2">LED_ON</text>
+  <text x="515" y="88" text-anchor="middle" class="t2">（初始 UNKNOWN 視同 NON_CONTACT 顯示）</text>
+  <path d="M592,128 L658,128" class="ln" marker-end="url(#s)"/>
+  <text x="625" y="120" text-anchor="middle" class="lbl">contact ×N</text>
+  <path d="M658,150 L592,150" class="ln" marker-end="url(#s)"/>
+  <text x="625" y="168" text-anchor="middle" class="lbl">non ×N</text>
+  <text x="625" y="215" text-anchor="middle" class="t2">SOP：接觸 → 後退 → 再下壓，持續循環</text>
+
+  <rect x="870" y="105" width="96" height="64" rx="32" class="box"/>
+  <text x="918" y="134" text-anchor="middle" class="t1">ERROR</text>
+  <text x="918" y="154" text-anchor="middle" class="t2">BLINK_FAST</text>
+
+  <path d="M152,137 L208,137" class="ln" marker-end="url(#s)"/>
+  <text x="180" y="128" text-anchor="middle" class="lbl">START</text>
+  <path d="M352,137 L408,137" class="ln" marker-end="url(#s)"/>
+  <text x="380" y="128" text-anchor="middle" class="lbl">檢查 OK</text>
+  <path d="M832,137 L868,137" class="ln" marker-end="url(#s)"/>
+  <text x="850" y="128" text-anchor="middle" class="lbl">逾時</text>
+  <path d="M280,171 L280,264 L900,264 L900,173" class="ln" stroke-dasharray="4 3" marker-end="url(#s)"/>
+  <text x="290" y="258" class="lbl">檢查失敗</text>
+  <path d="M936,171 L936,294 L85,294 L85,173" class="ln" marker-end="url(#s)"/>
+  <text x="500" y="288" text-anchor="middle" class="lbl">STOP_MONITOR / 再按按鈕（任何狀態）→ IDLE</text>
+</svg>
+</div>
+<p class="legend">ERROR 狀態再按按鈕或網頁「開始」可重試。「逾時」指取像或 AOI 連續失敗超過 <code>error_timeout_s</code>。</p>
+
+<h3>aoi-api 介面（預期，修改中）</h3>
+<pre><code>POST {aoi.url}/api/v1/predict      multipart: category, file=ROI 裁切影像
+200 {
+  "status": "contact" | "non_contact",
+  "roi_image": "/local_output/roi/20261106_101502_118.jpg",   # 暫定：ROI 影像路徑
+  "laplacian_score": 57.52, "ncc_score": 1.0                  # 若有，寫入 Log
+}</code></pre>
+
+<!-- ============================================================ -->
+<h2 id="sync">6. Redis 與狀態同步</h2>
+<div class="note warn">
+  <strong>要避免的現況問題（hid-status-manager）</strong><br>
+  網頁按下切換 RCM 後，畫面先切到 RCM；但 hid-status-manager 要等下層真的切換成功才改 Redis 的 status。期間網頁讀到 Redis 仍是 <code>local.normal</code>，畫面又被切回 Normal，直到下層成功後才再切回 RCM，造成閃動。<br>
+  根本原因：網頁把「我想要的狀態」和「實際狀態」當成同一個值在顯示。
+</div>
+
+<h3>設計規則</h3>
+<ol class="steps">
+  <li><strong>指令和狀態分開。</strong> 網頁只往 <code>contact:monitor:cmd</code>（STREAM）寫指令；<code>contact:monitor:state</code> 只有 contact-monitor-service 會寫。</li>
+  <li><strong>每個指令都有 <code>cmd_id</code>。</strong> 狀態裡記錄 <code>last_cmd_id</code> 和 <code>last_cmd_result</code>，網頁靠它確認「我送的指令處理完了沒」。</li>
+  <li><strong>網頁顯示「處理中」，不先切換。</strong> 按下後按鈕變成「啟動中…」並停用，畫面狀態保持原樣，直到收到帶有同一個 <code>cmd_id</code> 的狀態更新；超過 3 秒沒回應就顯示錯誤，而不是自己切回去。</li>
+  <li><strong>狀態有遞增的 <code>seq</code>。</strong> 網頁只接受比目前更新的狀態，晚到的舊訊息直接丟掉。</li>
+  <li><strong>實體按鈕走同一條路。</strong> 按鈕 → panel-io-service → contact-monitor-service → 寫 state + PUBLISH，網頁收到後同步更新；LED 也由同一個狀態變更驅動。</li>
+</ol>
+
+<h3>Redis Key</h3>
+<div class="table-wrap"><table>
+  <tr><th>Key</th><th>型態</th><th>寫入者</th><th>內容</th></tr>
+  <tr><td><code>contact:monitor:state</code></td><td>HASH</td><td>contact-monitor-service</td><td><code>seq</code>、<code>monitor_state</code>、<code>contact_state</code>、<code>contact_count</code>、<code>last_cmd_id</code>、<code>last_cmd_source</code>（web / panel）、<code>last_cmd_result</code>、<code>roi_image_url</code>、<code>error</code>、<code>updated_at</code></td></tr>
+  <tr><td><code>contact:monitor:cmd</code></td><td>STREAM</td><td>contact-monitor-web</td><td><code>cmd_id</code>、<code>cmd</code>（START_MONITOR / STOP_MONITOR）、<code>source</code>、<code>ts</code>；monitor 服務用 <code>XREAD BLOCK</code> 讀取</td></tr>
+  <tr><td><code>contact:monitor:events</code></td><td>PUB/SUB</td><td>contact-monitor-service</td><td>每次狀態變更 PUBLISH 完整狀態 JSON；網頁後端轉成 SSE 推給瀏覽器</td></tr>
+  <tr><td><code>contact:service:&lt;name&gt;</code></td><td>HASH（TTL 15 秒）</td><td>contact-monitor-service、contact-monitor-web</td><td><code>status</code>、<code>version</code>、<code>pid</code>、<code>started_at</code>、<code>config_version</code>、<code>heartbeat_at</code>；每 5 秒更新。panel-io-service 不連 Redis，它的連線狀態由 monitor 服務寫在 state 的 <code>panel_connected</code></td></tr>
+</table></div>
+
+<h3>時序：網頁按「開始監控」</h3>
+<div class="diagram" role="img" aria-label="時序圖：瀏覽器送開始指令，網頁後端寫入 Redis 指令佇列並回傳 cmd_id；監控服務讀取指令、更新狀態並通知 LED；網頁收到同 cmd_id 的狀態後才更新按鈕">
+<svg viewBox="0 0 980 470" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <marker id="q" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ah"/></marker>
+    <marker id="qa" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0,0 L10,5 L0,10 z" class="ah acc"/></marker>
+  </defs>
+  <g text-anchor="middle">
+    <rect x="30" y="14" width="140" height="36" rx="8" class="box"/><text x="100" y="37" class="t1">瀏覽器</text>
+    <rect x="225" y="14" width="160" height="36" rx="8" class="box svc"/><text x="305" y="37" class="t1" style="font-size:13px">contact-monitor-web</text>
+    <rect x="440" y="14" width="120" height="36" rx="8" class="box"/><text x="500" y="37" class="t1">Redis</text>
+    <rect x="605" y="14" width="190" height="36" rx="8" class="box svc"/><text x="700" y="37" class="t1" style="font-size:13px">contact-monitor-service</text>
+    <rect x="830" y="14" width="140" height="36" rx="8" class="box svc"/><text x="900" y="37" class="t1" style="font-size:13px">panel-io-service</text>
+  </g>
+  <line x1="100" y1="50" x2="100" y2="460" class="life"/>
+  <line x1="305" y1="50" x2="305" y2="460" class="life"/>
+  <line x1="500" y1="50" x2="500" y2="460" class="life"/>
+  <line x1="700" y1="50" x2="700" y2="460" class="life"/>
+  <line x1="900" y1="50" x2="900" y2="460" class="life"/>
+
+  <line x1="100" y1="85" x2="303" y2="85" class="ln" marker-end="url(#q)"/>
+  <text x="110" y="78" class="lbl">① POST /api/monitor/start</text>
+  <line x1="305" y1="120" x2="498" y2="120" class="ln" marker-end="url(#q)"/>
+  <text x="315" y="113" class="lbl">② XADD cmd {cmd_id: c7, START_MONITOR}</text>
+  <line x1="305" y1="150" x2="102" y2="150" class="ln" marker-end="url(#q)"/>
+  <text x="115" y="143" class="lbl">③ 202 {cmd_id: c7}</text>
+  <text x="110" y="172" class="lbl" style="fill:var(--accent)">按鈕「啟動中…」停用，狀態不變</text>
+
+  <line x1="500" y1="200" x2="698" y2="200" class="ln" marker-end="url(#q)"/>
+  <text x="510" y="193" class="lbl">④ XREAD BLOCK 取得 c7</text>
+  <line x1="700" y1="235" x2="502" y2="235" class="ln" marker-end="url(#q)"/>
+  <text x="520" y="228" class="lbl">⑤ HSET state STARTING, seq=41</text>
+  <line x1="700" y1="270" x2="898" y2="270" class="ln acc" marker-end="url(#qa)"/>
+  <text x="712" y="263" class="lbl">⑥ SET_LED LED_BLINK_SLOW</text>
+  <text x="715" y="300" class="lbl">⑦ 確認 RCM / aoi-api 正常</text>
+  <line x1="700" y1="330" x2="502" y2="330" class="ln" marker-end="url(#q)"/>
+  <text x="512" y="323" class="lbl">⑧ HSET MONITORING, c7, seq=42</text>
+  <line x1="500" y1="365" x2="307" y2="365" class="ln" marker-end="url(#q)"/>
+  <text x="318" y="358" class="lbl">⑨ PUBLISH events（完整狀態）</text>
+  <line x1="305" y1="400" x2="102" y2="400" class="ln" marker-end="url(#q)"/>
+  <text x="115" y="393" class="lbl">⑩ SSE state（seq=42）</text>
+  <text x="110" y="425" class="lbl" style="fill:var(--accent)">last_cmd_id = c7 → 按鈕改成「停止監控」</text>
+  <text x="712" y="425" class="lbl">實體按鈕：從 ⑤ 開始相同，</text>
+  <text x="712" y="443" class="lbl">只是指令來自 TCP BUTTON_PRESSED</text>
+</svg>
+</div>
+
+<h3>網頁後端 API</h3>
+<div class="table-wrap"><table>
+  <tr><th>Method / Path</th><th>說明</th></tr>
+  <tr><td><code>POST /api/monitor/start</code></td><td>寫入 START_MONITOR，回 <code>202 {cmd_id}</code></td></tr>
+  <tr><td><code>POST /api/monitor/stop</code></td><td>寫入 STOP_MONITOR，回 <code>202 {cmd_id}</code></td></tr>
+  <tr><td><code>GET /api/monitor/state</code></td><td>目前完整狀態（頁面載入時用）</td></tr>
+  <tr><td><code>GET /api/monitor/events</code></td><td>SSE，推送狀態變更</td></tr>
+  <tr><td><code>GET /api/rcm/stream</code></td><td>轉送 RCM MJPEG 串流（後端帶 Basic Auth，瀏覽器不必知道 KVM 帳密）</td></tr>
+  <tr><td><code>GET /api/monitor/roi-image</code></td><td>轉送 aoi-api 最新的 ROI 影像</td></tr>
+</table></div>
+
+<!-- ============================================================ -->
+<h2 id="ui">7. 網頁 UI：監控畫面</h2>
+<p>點下面的按鈕切換狀態，看各種情況下畫面的樣子。影像取自參考影片 <code>contact-dual02.mp4</code> 中藍綠色框的範圍。</p>
+<p>每一頁左上角都放公司 Logo，與 JEEP KVM 首頁相同。Logo 檔放在 <code>/opt/jtron/jeep/app/contact-monitor-web/static/jtron-logo.png</code>。因為頁首是深色，Logo 加白色圓角底。瀏覽器分頁圖示也用同一個 Logo。</p>
+<div class="mock-switch" role="group" aria-label="切換 UI 狀態">
+  <button type="button" data-s="idle" aria-pressed="true">未監控</button>
+  <button type="button" data-s="starting" aria-pressed="false">啟動中</button>
+  <button type="button" data-s="non" aria-pressed="false">監控中 · Non Contact</button>
+  <button type="button" data-s="contact" aria-pressed="false">監控中 · Contact</button>
+  <button type="button" data-s="error" aria-pressed="false">異常</button>
+</div>
+
+<div class="mock" id="mock">
+  <div class="mock-top">
+    <span class="brand-wrap"><img class="logo" src="data:image/png;base64,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" alt="JTRON"><span class="brand">AH9710 Contact Monitor</span></span>
+    <span class="conn"><span><span class="dot"></span>RCM 192.168.3.2</span><span><span class="dot"></span>aoi-api</span><span><span class="dot"></span>面板</span><span class="gear">⚙ 系統設定</span></span>
+  </div>
+  <div class="mock-body">
+    <div class="live" id="live">
+      <img id="liveImg" alt="RCM 即時影像（藍綠色框範圍）" src="data:image/jpeg;base64,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">
+      <div class="badge" id="badge">NOT MONITORING</div>
+      <div class="fps">LIVE · 10 fps · display_roi 1148×860</div>
+    </div>
+    <div class="side">
+      <div class="panel">
+        <div class="kv">
+          <div><div class="k">監控狀態</div><div class="v" id="mState">IDLE</div></div>
+          <div><div class="k">Contact 次數</div><div class="v" id="mCount">0</div></div>
+          <div><div class="k">最後判定</div><div class="v" id="mLast" style="font-size:14px">—</div></div>
+          <div><div class="k">AOI 延遲</div><div class="v" id="mLat" style="font-size:14px">—</div></div>
+        </div>
+      </div>
+      <div class="panel">
+        <div class="k" style="margin-bottom:6px">AOI ROI 影像（Contact 時顯示）</div>
+        <div class="roi" id="roi">無</div>
+      </div>
+      <button type="button" class="big-btn start" id="mBtn">開始監控</button>
+      <div class="k" id="mHint" style="font-size:12px;color:#8b98a8;text-align:center">與實體按鈕同步；LED：熄滅</div>
+    </div>
+  </div>
+  <div class="log" id="log" aria-label="事件紀錄"></div>
+</div>
+<ul class="callouts">
+  <li>左側只顯示藍綠色框（<code>display_roi</code>）裡的即時影像，框外的文字和數值不顯示。</li>
+  <li>右上大字狀態仿照影片的 OK 顯示：<span class="pill ok">CONTACT</span> 綠、<span class="pill warn">NON CONTACT</span> 橘、<span class="pill idle">NOT MONITORING</span> 灰、<span class="pill err">ERROR</span> 紅。</li>
+  <li>ROI 影像只在 CONTACT 時顯示 aoi-api 回傳的圖，轉成 NON CONTACT 立即清掉。</li>
+  <li>開始 / 停止是同一顆按鈕；按下後顯示「啟動中…」/「停止中…」，等 contact-monitor-service 確認後才變更。</li>
+  <li>下方事件紀錄同時列出網頁和實體按鈕的操作來源。</li>
+  <li>右上角「⚙ 系統設定」進入設定頁，需要登入；監控畫面本身不需登入，OP 可直接使用。</li>
+</ul>
+
+<!-- ============================================================ -->
+<h2 id="settings">8. 系統設定（網頁）</h2>
+<p>網頁提供系統設定頁，可以修改三個服務的設定。修改後要先確認，確認後才寫入設定檔並重啟受影響的服務。</p>
+
+<h3>登入與權限</h3>
+<ul>
+  <li>進入設定頁需要登入，帳號 <code>admin</code>，密碼依需求設定。密碼不以明文保存：<code>web.json</code> 只存 PBKDF2 雜湊，可在設定頁「帳號」區塊修改。</li>
+  <li>登入後以 HttpOnly session cookie 維持登入狀態，閒置 30 分鐘自動登出（可設定）。</li>
+  <li>連續 5 次密碼錯誤鎖定 5 分鐘；登入成功、失敗、登出都寫入日誌（<code>LOGIN_SUCCESS</code> / <code>LOGIN_FAILED</code> / <code>LOGOUT</code>）。</li>
+  <li><strong>監控畫面（開始 / 停止、即時影像、狀態）不需登入</strong>，OP 可直接使用；只有系統設定需要登入。</li>
+  <li>密碼類欄位（RCM 密碼、登入密碼）不會回傳到瀏覽器，畫面只顯示 <code>••••••</code>；留空表示不變更。</li>
+</ul>
+
+<h3>RCM 密碼加密保存</h3>
+<ul>
+  <li>設定檔不存明文，改存 <code>"password_enc": "aesgcm:v1:&lt;base64&gt;"</code>，使用 AES-256-GCM 加密（Python <code>cryptography</code> 套件，jeepKVM 沒有網路，和 aoi-api 一樣以離線 wheel 安裝）。</li>
+  <li>金鑰檔 <code>/opt/jtron/jeep/config/contact-monitor/secret.key</code>：安裝時隨機產生 32 bytes，權限 <code>0600</code>，擁有者為執行服務的帳號 <code>jtron</code>；不放進備份、不隨設定檔複製。</li>
+  <li>網頁儲存設定時加密寫入；contact-monitor 與 contact-monitor-web 啟動時讀金鑰解密，明文只存在記憶體，任何日誌都只顯示 <code>******</code>。</li>
+  <li>金鑰遺失或解密失敗時，服務記錄 <code>CONFIG_INVALID</code> 並停止啟動（套用設定時會觸發自動還原）；需在設定頁重新輸入 RCM 密碼。</li>
+  <li>沒有網頁時也可在 jeepKVM 上用指令設定：<code>contact-config set-secret rcm.password</code>。</li>
+</ul>
+<div class="note">金鑰和設定檔放在同一台機器，所以加密的作用是：設定檔被複製、備份或外流時看不到密碼；能取得 jeepKVM root 權限的人仍可解密。</div>
+
+<h3>設定分區</h3>
+<div class="table-wrap"><table>
+  <tr><th>區塊</th><th>設定項目</th><th>寫入檔案</th><th>套用時重啟</th></tr>
+  <tr><td>監控 / AOI</td><td>AOI API 網址、類別、判定頻率（ms）、逾時（秒）、連續相同判定次數、異常判定時間</td><td><code>monitor.json</code></td><td>contact-monitor</td></tr>
+  <tr><td>RCM 影像來源</td><td>RCM 主機、帳號、密碼、是否驗證憑證、逾時；可按「測試連線」先取一張影像</td><td><code>common.json</code></td><td>contact-monitor、contact-monitor-web</td></tr>
+  <tr><td>ROI</td><td><code>capture_roi</code>（送 AOI）與 <code>display_roi</code>（網頁顯示）的 x、y、寬、高；可在目前畫面上直接框選</td><td><code>monitor.json</code> / <code>web.json</code></td><td>依修改的項目</td></tr>
+  <tr><td>操作面板 IO</td><td>驅動（GPIO / UART）、TCP port、按鈕與 LED 的 GPIO 腳位和電位、去彈跳、長按時間、心跳逾時、UART 埠與速率</td><td><code>panel-io.json</code></td><td>contact-panel-io（改 port 時加 contact-monitor）</td></tr>
+  <tr><td>網頁</td><td>網頁 port、影像串流 fps、指令逾時、登入閒置逾時</td><td><code>web.json</code></td><td>contact-monitor-web</td></tr>
+  <tr><td>日誌</td><td>各服務分開設定：Log level、存放位置、命名格式、單檔大小、保留檔數、保留天數、是否輸出到 console</td><td>各服務的設定檔</td><td>該服務</td></tr>
+  <tr><td>系統</td><td>Redis 位址、設定檔備份保留份數</td><td><code>common.json</code></td><td>contact-monitor、contact-monitor-web</td></tr>
+  <tr><td>帳號</td><td>修改登入密碼（需輸入目前密碼）</td><td><code>web.json</code></td><td>不需重啟</td></tr>
+</table></div>
+
+<h3>套用流程</h3>
+<ol class="steps">
+  <li><strong>編輯：</strong>欄位即時檢查格式與範圍（例如判定頻率 100–5000 ms），有修改的欄位會標示出來。</li>
+  <li><strong>檢查變更：</strong>按「套用」後，後端再驗證一次，回傳「改了哪些欄位」和「要重啟哪些服務」。</li>
+  <li><strong>確認：</strong>跳出確認視窗，列出原值 → 新值（密碼只顯示「已變更」）與要重啟的服務。若目前正在監控，提示「套用後監控會停止」。</li>
+  <li><strong>寫入：</strong>先備份目前的設定檔到 <code>config/backup/&lt;時間&gt;/</code>，再以「寫暫存檔 → 改名」的方式寫入，避免寫到一半斷電造成檔案損壞；<code>config_version</code> 加 1，並記錄 <code>CONFIG_CHANGED</code>（操作者、修改欄位，密碼遮罩）。</li>
+  <li><strong>重啟：</strong>依序 <code>systemctl restart</code> 受影響的服務，每個服務等它回報 <code>SERVICE_STARTED</code> 心跳（Redis <code>contact:service:&lt;name&gt;</code>，<code>config_version</code> 為新版本）或 systemd 為 active，最多等 15 秒。網頁服務自己需要重啟時排在最後，頁面顯示「網頁服務重新啟動中」並自動重新連線。</li>
+  <li><strong>失敗還原：</strong>任一服務啟動失敗，自動還原備份的設定檔並再重啟一次，畫面顯示失敗原因，日誌記錄 <code>CONFIG_ROLLBACK</code>。</li>
+</ol>
+<h3>網頁重啟服務的權限</h3>
+<p>三個服務都以 <code>jtron</code> 帳號執行（不是 root）。網頁服務透過 sudoers 只能重啟這三個 unit，不能執行其他 root 指令。服務狀態用 <code>systemctl is-active</code> 查詢，不需要 sudo。</p>
+<pre><code># /etc/sudoers.d/contact-monitor   （安裝時以 visudo -cf 檢查語法）
+jtron ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block contact-panel-io, \
+                           /usr/bin/systemctl restart --no-block contact-monitor, \
+                           /usr/bin/systemctl restart --no-block contact-monitor-web</code></pre>
+<ul>
+  <li>使用 <code>--no-block</code>：指令送出就返回，網頁再自己輪詢健康狀態，不會卡在 systemctl。</li>
+  <li>網頁重啟自己時排在最後：先回應瀏覽器「網頁服務重新啟動中」，再送出重啟指令；瀏覽器每秒重試連線，連上後顯示套用結果。</li>
+  <li>每次重啟都記錄 <code>SERVICE_RESTART_REQUESTED</code>（操作者、unit、原因）與 <code>SERVICE_RESTART_RESULT</code>。</li>
+</ul>
+
+<h3>設定頁設計圖</h3>
+<style>
+.set-mock { background: #11161c; color: #e6edf3; border-radius: 12px; border: 1px solid #263240; overflow: hidden; font-size: 14px; position: relative; min-height: 470px; }
+.set-mock .mock-top a { color: #cfe3ea; }
+.login { max-width: 320px; margin: 60px auto; background: #0b1016; border: 1px solid #263240; border-radius: 10px; padding: 22px; }
+.login h4 { margin: 0 0 14px; font-size: 17px; }
+.f { margin-bottom: 12px; }
+.f label { display: block; font-size: 12px; color: #8b98a8; margin-bottom: 3px; }
+.inp { background: #05080a; border: 1px solid #33404e; border-radius: 6px; padding: 6px 9px; font-family: ui-monospace, Consolas, monospace; font-size: 13px; color: #e6edf3; min-height: 32px; }
+.inp.changed { border-color: #e3a23a; box-shadow: 0 0 0 1px #e3a23a inset; }
+.hint { font-size: 11.5px; color: #6f7c8b; margin-top: 2px; }
+.set-body { display: grid; grid-template-columns: 170px 1fr; min-height: 420px; }
+@media (max-width: 760px) { .set-body { grid-template-columns: 1fr; } }
+.set-nav { border-right: 1px solid #263240; padding: 10px 0; background: #0b1016; }
+.set-nav button { display: block; width: 100%; text-align: left; font: inherit; font-size: 13.5px; background: none; border: 0; color: #b8c3cf; padding: 8px 16px; cursor: pointer; }
+.set-nav button[aria-current="true"] { background: #1b2733; color: #fff; box-shadow: inset 3px 0 0 #3fa79a; }
+.set-nav .dirty::after { content: " ●"; color: #e3a23a; font-size: 10px; }
+.set-main { padding: 16px 18px; min-width: 0; }
+.set-main h4 { margin: 0 0 2px; font-size: 16px; }
+.set-main .svc { font-size: 12px; color: #8b98a8; margin-bottom: 14px; }
+.fgrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 16px; }
+@media (max-width: 760px) { .fgrid { grid-template-columns: 1fr; } }
+.set-actions { display: flex; gap: 10px; justify-content: flex-end; border-top: 1px solid #263240; padding-top: 12px; margin-top: 8px; flex-wrap: wrap; align-items: center; }
+.sbtn { font: inherit; font-size: 14px; padding: 7px 16px; border-radius: 7px; border: 1px solid #33404e; background: #1b2733; color: #e6edf3; cursor: pointer; }
+.sbtn.primary { background: #0b6e8a; border-color: #0b6e8a; color: #fff; }
+.sbtn.danger { background: #c23a3a; border-color: #c23a3a; color: #fff; }
+.logtbl { width: 100%; border-collapse: collapse; font-size: 12.5px; background: transparent; }
+.logtbl th, .logtbl td { border: 1px solid #263240; padding: 5px 7px; color: #cfd8e2; background: transparent; }
+.logtbl th { background: #0b1016; }
+.overlay { position: absolute; inset: 0; background: rgba(3,6,9,.72); display: grid; place-items: center; padding: 16px; }
+.dialog { background: #161d25; border: 1px solid #33404e; border-radius: 10px; padding: 18px 20px; max-width: 560px; width: 100%; }
+.dialog h4 { margin: 0 0 10px; font-size: 16px; }
+.dialog table { background: transparent; font-size: 13px; margin: 6px 0 12px; }
+.dialog th, .dialog td { border: 1px solid #2c3744; color: #dbe3ec; background: transparent; padding: 5px 8px; }
+.dialog th { background: #0b1016; }
+.warnbox { background: #3a2a10; color: #f0c477; border-radius: 6px; padding: 7px 10px; font-size: 13px; margin: 8px 0; }
+.prog { list-style: none; padding: 0; margin: 8px 0; font-size: 13.5px; }
+.prog li { padding: 4px 0; }
+.prog .ok { color: #46c47a; } .prog .run { color: #e3a23a; }
+</style>
+<div class="mock-switch" role="group" aria-label="切換設定頁畫面">
+  <button type="button" data-v="login" aria-pressed="true">① 登入</button>
+  <button type="button" data-v="edit" aria-pressed="false">② 編輯設定</button>
+  <button type="button" data-v="confirm" aria-pressed="false">③ 確認變更</button>
+  <button type="button" data-v="apply" aria-pressed="false">④ 套用與重啟</button>
+</div>
+<div class="set-mock" id="setMock"></div>
+<p class="legend">② 可點左側區塊切換；橘色框為已修改的欄位，左側橘點表示該區塊有未套用的修改。</p>
+
+<!-- ============================================================ -->
+<h2 id="logging">9. 日誌機制</h2>
+<p>三個服務共用 <code>jtron_log</code> 日誌模組，設定格式相同，各自寫入自己的目錄。位置沿用 JEEP 的慣例 <code>/media/disk/log/&lt;服務&gt;/</code>（每台 jeepKVM 都有）。</p>
+<div class="note">
+  <strong>與 log-cleaner 配合</strong><br>
+  jeepKVM 上的 log-cleaner 由 root crontab 每天 00:05 執行，會刪除 <code>/media/disk/log/</code> 底下（含子目錄）修改時間超過 <code>backup_days</code> 天的檔案（設定在 <code>/opt/jtron/jeep/config/log-cleaner/config.json</code>），與檔名無關。因此：
+  <ul style="margin:6px 0 0">
+    <li>依天數清理交給 log-cleaner，本模組的 <code>retention_days</code> 預設 <code>0</code>（不另外依天數刪除）。</li>
+    <li>log-cleaner 只看天數、不看容量，所以本模組保留 <code>max_size_mb</code> × <code>max_files</code> 的容量上限，避免 DEBUG 等級在幾天內寫滿磁碟（預設每個服務最多 5 MB × 30 = 150 MB）。</li>
+    <li>正在寫入的檔案修改時間一直是最新的，不會被 log-cleaner 刪掉。</li>
+  </ul>
+</div>
+
+<h3>可設定項目</h3>
+<div class="table-wrap"><table>
+  <tr><th>設定</th><th>預設值</th><th>說明</th></tr>
+  <tr><td><code>level</code></td><td><code>INFO</code></td><td><code>DEBUG</code> / <code>INFO</code> / <code>WARNING</code> / <code>ERROR</code>。DEBUG 會記錄每一次 AOI 判定結果與耗時。</td></tr>
+  <tr><td><code>dir</code></td><td><code>/media/disk/log/{service}</code></td><td>存放位置，<code>{service}</code> 會換成服務名稱；目錄不存在時自動建立。放在 <code>/media/disk/log/</code> 底下才會被 log-cleaner 清理。</td></tr>
+  <tr><td><code>file_name</code></td><td><code>{service}_{date}.log</code></td><td>命名格式，可用 <code>{service}</code>、<code>{date}</code>（依 <code>date_format</code>）、<code>{host}</code>。</td></tr>
+  <tr><td><code>date_format</code></td><td><code>%Y%m%d</code></td><td><code>{date}</code> 的格式；日期改變時自動開新檔。</td></tr>
+  <tr><td><code>max_size_mb</code></td><td><code>5</code></td><td>單檔上限，超過時切割成 <code>…_20261106.1.log</code>、<code>.2.log</code>，目前寫入的檔名不變。</td></tr>
+  <tr><td><code>max_files</code></td><td><code>30</code></td><td>每個服務最多保留幾個日誌檔，超過時刪除最舊的。</td></tr>
+  <tr><td><code>retention_days</code></td><td><code>0</code></td><td><code>0</code> 表示交給 log-cleaner；若需要比 log-cleaner 更短的保留期再設定天數。</td></tr>
+  <tr><td><code>console</code></td><td><code>true</code></td><td>同時輸出到 console，systemd 會收進 journal（<code>journalctl -u contact-monitor</code>）。</td></tr>
+  <tr><td><code>format</code></td><td>見下方</td><td>每行格式，預設包含時間（到毫秒）、等級、服務名稱、事件代碼與內容。</td></tr>
+</table></div>
+
+<h3>格式與啟動紀錄</h3>
+<p>每次服務啟動，第一批日誌一定是 <code>SERVICE_STARTED</code>，記錄版本、PID、主機、設定檔路徑與版本、日誌設定，以及主要設定值（密碼一律遮罩）。正常結束時記錄 <code>SERVICE_STOPPED</code> 與原因。</p>
+<pre><code>2026-11-06 10:15:04.512 [INFO ] [contact-monitor-service] SERVICE_STARTED version=0.3.0 pid=2314 host=jeepkvm python=3.11.2
+2026-11-06 10:15:04.513 [INFO ] [contact-monitor-service] CONFIG_LOADED files=common.json,monitor.json config_version=19
+2026-11-06 10:15:04.513 [INFO ] [contact-monitor-service] LOG_SETTINGS level=INFO dir=/media/disk/log/contact-monitor-service file=contact-monitor-service_{date}.log max_size_mb=5 max_files=30 retention_days=0
+2026-11-06 10:15:04.514 [INFO ] [contact-monitor-service] SETTINGS rcm=admin:******@192.168.3.5 aoi=http://192.168.137.101:8000 interval_ms=200 timeout_s=3 capture_roi=526,211,1152,863
+2026-11-06 10:15:04.630 [INFO ] [contact-monitor-service] PANEL_CONNECTED peer=127.0.0.1:57310 driver=gpio
+2026-11-06 10:15:04.633 [INFO ] [contact-monitor-service] REDIS_CONNECTED url=redis://127.0.0.1:6379/0
+2026-11-06 10:15:09.871 [INFO ] [contact-monitor-service] MONITOR_STARTED cmd_id=c7 source=web
+2026-11-06 10:15:12.104 [INFO ] [contact-monitor-service] CONTACT_CHANGED NON_CONTACT -&gt; CONTACT count=1
+2026-11-06 10:16:30.002 [INFO ] [contact-monitor-service] SERVICE_STOPPED reason=SIGTERM uptime_s=86</code></pre>
+
+<h3>事件代碼</h3>
+<div class="table-wrap"><table>
+  <tr><th>服務</th><th>事件代碼</th></tr>
+  <tr><td>全部</td><td><code>SERVICE_STARTED</code>、<code>SERVICE_STOPPED</code>、<code>CONFIG_LOADED</code>、<code>CONFIG_INVALID</code>、<code>LOG_SETTINGS</code>、<code>SETTINGS</code>、<code>UNHANDLED_ERROR</code></td></tr>
+  <tr><td>panel-io-service</td><td><code>CLIENT_CONNECTED</code>、<code>CLIENT_DISCONNECTED</code>、<code>BUTTON_PRESSED</code>、<code>LED_MODE_CHANGED</code>、<code>HEARTBEAT_TIMEOUT</code>、<code>DRIVER_ERROR</code></td></tr>
+  <tr><td>contact-monitor-service</td><td><code>PANEL_CONNECTED</code>、<code>PANEL_DISCONNECTED</code>、<code>REDIS_CONNECTED</code>、<code>COMMAND_RECEIVED</code>、<code>MONITOR_STARTED</code>、<code>MONITOR_STOPPED</code>、<code>CONTACT_CHANGED</code>、<code>AOI_RESULT</code>（DEBUG）、<code>AOI_ERROR</code>、<code>RCM_ERROR</code>、<code>MONITOR_ERROR</code></td></tr>
+  <tr><td>contact-monitor-web</td><td><code>LOGIN_SUCCESS</code>、<code>LOGIN_FAILED</code>、<code>LOGIN_LOCKED</code>、<code>LOGOUT</code>、<code>COMMAND_SENT</code>、<code>CONFIG_CHANGED</code>、<code>SERVICE_RESTART_REQUESTED</code>、<code>SERVICE_RESTART_RESULT</code>、<code>CONFIG_ROLLBACK</code></td></tr>
+</table></div>
+<div class="note">AOI 每秒可能判定數次，若每次都用 INFO 記錄會讓日誌快速膨脹，所以每次判定結果只在 DEBUG 等級記錄；INFO 只記錄狀態有變化的時候。</div>
+
+<!-- ============================================================ -->
+<h2 id="config">10. 設定檔（草案）</h2>
+<p>設定檔放在 <code>/opt/jtron/jeep/config/contact-monitor/</code>。<code>common.json</code> 放兩個服務共用的 RCM 與 Redis 設定，其他三個檔案各屬一個服務。每個檔案都有相同格式的 <code>logging</code> 區塊。</p>
+<div class="grid2">
+<div>
+<h3>common.json（共用）</h3>
+<pre><code>{
+  "config_version": 19,
+  "rcm": {
+    "host": "192.168.3.2",
+    "username": "admin",
+    "password_enc": "aesgcm:v1:…", // AES-256-GCM 加密，見第 8 節；網頁不回傳明文
+    "verify_tls": false,
+    "timeout_s": 3
+  },
+  "redis": { "url": "redis://127.0.0.1:6379/0" },
+  "config_backup_keep": 20
+}</code></pre>
+<h3>monitor.json（contact-monitor-service）</h3>
+<pre><code>{
+  "capture_roi": { "x": 526, "y": 211, "w": 1152, "h": 863 },
+  "aoi": {
+    "url": "http://192.168.137.101:8000",
+    "category": "01_Series",
+    "interval_ms": 300,          // AOI 判定頻率
+    "timeout_s": 3
+  },
+  "debounce_count": 2,
+  "error_timeout_s": 5,
+  "panel_io": { "host": "127.0.0.1", "port": 57310 },
+  "logging": {
+    "level": "INFO",
+    "dir": "/media/disk/log/{service}",
+    "file_name": "{service}_{date}.log",
+    "date_format": "%Y%m%d",
+    "max_size_mb": 5,
+    "max_files": 30,
+    "retention_days": 0,           // 0 = 交給 log-cleaner
+    "console": true
+  }
+}</code></pre>
+</div>
+<div>
+<h3>panel-io.json（panel-io-service）</h3>
+<pre><code>{
+  "listen": { "host": "0.0.0.0", "port": 57310 },
+  "driver": "gpio",              // 未來改 "uart"
+  "gpio": {
+    "chip": "gpiochip0",
+    "buttons": { "monitor": { "gpio": 14, "active_high": true, "pull": "down" } },
+    "leds":    { "status":  { "gpio": 15, "active_high": true } }
+  },
+  "uart": { "port": "/dev/ttyAMA0", "baudrate": 115200 },
+  "debounce_ms": 30,
+  "long_press_ms": 3000,
+  "heartbeat_timeout_s": 5,
+  "logging": { "level": "INFO", "...": "同上" }
+}</code></pre>
+<h3>web.json（contact-monitor-web）</h3>
+<pre><code>{
+  "listen": { "host": "0.0.0.0", "port": 8010 },
+  "display_roi": { "x": 526, "y": 211, "w": 1152, "h": 863 },
+  "stream_fps": 10,
+  "command_timeout_s": 3,
+  "auth": {
+    "users": [ { "username": "admin", "password_hash": "pbkdf2_sha256$..." } ],
+    "session_idle_min": 30,
+    "max_failed_logins": 5,
+    "lockout_min": 5
+  },
+  "restart": {
+    "units": {
+      "panel-io": "contact-panel-io",
+      "monitor": "contact-monitor",
+      "web": "contact-monitor-web"
+    },
+    "health_timeout_s": 15
+  },
+  "logging": { "level": "INFO", "...": "同上" }
+}</code></pre>
+</div>
+</div>
+<p class="legend">ROI 座標以影片（1920×1080）量到的藍綠色框為例；實際值要用 RCM 擷取的原圖解析度重新量測。</p>
+
+<!-- ============================================================ -->
+<h2 id="open">11. 已決定與待確認事項</h2>
+<h3>已決定（v0.4）</h3>
+<div class="table-wrap"><table>
+  <tr><th>項目</th><th>決定</th></tr>
+  <tr><td>監控畫面權限</td><td>監控畫面（開始 / 停止、即時影像、狀態）不需登入；只有系統設定需要登入。</td></tr>
+  <tr><td>網頁重啟服務</td><td>可以。透過 <code>/etc/sudoers.d/contact-monitor</code> 只開放三個 unit 的 <code>systemctl restart --no-block</code>（見第 8 節）。</td></tr>
+  <tr><td>RCM 密碼保存</td><td>AES-256-GCM 加密存成 <code>password_enc</code>，金鑰檔 <code>secret.key</code>（0600，jtron）（見第 8 節）。</td></tr>
+  <tr><td>日誌位置與清理</td><td><code>/media/disk/log/&lt;服務&gt;/</code>，每台 jeepKVM 都有；依天數清理交給 log-cleaner，本模組只保留容量上限（三個服務合計最多約 450 MB）。</td></tr>
+  <tr><td>目錄</td><td>沿用 JEEP 慣例：程式 <code>/opt/jtron/jeep/app/&lt;服務&gt;</code>、設定 <code>/opt/jtron/jeep/config/contact-monitor/</code>。</td></tr>
+</table></div>
+<h3>待確認</h3>
+<div class="table-wrap"><table>
+  <tr><th>#</th><th>項目</th><th>說明</th></tr>
+  <tr><td>1</td><td>aoi-api 回傳格式</td><td>status 欄位名稱與值、ROI 影像是回「路徑」還是可直接取用的 URL / base64。網頁要顯示，最好是 URL。</td></tr>
+  <tr><td>2</td><td>GPIO15 外部驅動</td><td>先前在 192.168.137.101 實測 GPIO15 設低電位仍讀到高電位，需確認面板實際接在哪台 KVM、接線是否正確，並在部署時停用 ttyAMA0 的序列 console。</td></tr>
+  <tr><td>3</td><td>RCM 解析度與 ROI</td><td>192.168.3.2 目前擷取到 1024×768；Handler 鏡頭訊號接上後需重新量 <code>capture_roi</code> / <code>display_roi</code>。</td></tr>
+  <tr><td>4</td><td>異常燈號</td><td>是否採用 <code>LED_BLINK_FAST</code> 表示異常（原需求只有三種模式）。</td></tr>
+  <tr><td>5</td><td>長按功能</td><td>長按是否保留給「註冊 Template」或其他功能，或 POC 先不使用。</td></tr>
+  <tr><td>6</td><td>log-cleaner 保留天數</td><td>192.168.137.101 的 <code>backup_days</code> 是 10 天；其他 jeepKVM 是否相同、10 天是否足夠追查問題。</td></tr>
+</table></div>
+
+</main>
+<script>
+(function () {
+  var IMG = { contact: "data:image/jpeg;base64,/9j/4AAQSkZJRgABAgDzSfORAAD//gAPTGF2YzYyLjMuMTAxAP/bAEMACAwMDgwOEBAQEBAQExITFBQUExMTExQUFBUVFRkZGRUVFRQUFRUYGBkZGxwbGhoZGhwcHh4eJCQiIioqKzMzPv/EAKsAAAEFAQEBAAAAAAAAAAAAAAEABAMCBQYHCAEBAQEBAQEAAAAAAAAAAAAAAAECBAMFEAABAwIBBQsJBwQCAwEBAQAAAQIRAwQSIQWSMdEVNBRRcxNSskFxk7HSUyJUciMyYaKzBjOBQnQ1kSShQxZEg8FiY4IRAQABAQQHBgUEAgMBAAAAAAABAjEDcRFRUhMSMgQzUxRzsZGy0oJyIZJBItFhgULwwUOh/8AAEQgBrwJAAwEiAAIRAAMRAP/aAAwDAQACEQMRAD8A8zvb6tQruYxUhETWk60M7dW6426KFc576f3N8hjmpn7uai7ommP2xY2t1brjbooLdW6426KGKAZy3s6NWG3urdcbdFBbqXXG3RQxREzk2dGrDZ3VuuNuigd1LrjbooYghvSbOjVht7qXXG3RQW6t10m6KGMAZybOjVhtbq3XSbooLdW66TdFDFEM5NnRqw291brpN0UFurddJuihiiG9Js6NWG1urddJuigd1LrjbooYgi5ybOjVhubqXXSbooV3VuuNuihjAJvSbOjVhs7q3XG3RQW6t1xt0UMUQzk2dGrDc3UuuNuigt1LrpN0UMZBKM5NlRqw2d1LrjbooLdS6426KGOgBnJsqNWGzupdcbdFBbqXXG3RQxRDOTZUasNrdS6426KC3UuuNuihihGcmyo1YbO6l1xt0UDupdcbdFDGEXek2VGrDZ3UuuNuigN1LrjbooY4IG9Js6NWGzupdcbdFBbqXXG3RQxQjek2dGrDZ3UuuNuig5t85XD69FrlaqOqMRfVTUrkRTnhzab5octT66E3pNnRqw27vONxTua7Gq1Gtq1GomFMiI5UQZ7qXXSbooNb7fdzy1XrqMC5ybKjVh1lte3FVYVW6KGpWrVKbJSJ7jlLOslF8qata8bURUQZybKjVhnuzpcoutuihTdW66TdFBhUZ2jWCb0mzo1YbO6t10m6KC3Vuuk3RQxRDek2dGrDc3Uuuk3RQtunc9JuihhhGcmzo1Ybm6dz0m6KFt0rnpN0UMOS0jOTZUasNvdK56TdFA7pXPG3RQw5LSM50myo1YbW6Vxxt0UFulc9JuihiyKRnOk2VGrDa3SuOk3RQW6Vx0m6KGLIhvTpNlRqw290rjpN0UFulcdJuihiCkb06TZUasNrdK4426KB3SuONuihiyGRvTpNlRqw2d0bjjbooHdG4426KGLIZG9Ok2VGrDa3RuOk3RQW6Nxxt0UMWRYhnOk2VGrDa3RuONuigt0bjpN0UMbECRvTpNlRqw290K/G3RQtuhX426KGHIpG9Ok2VGrDb3Qr8bdFApnCvxt0UMWQSM50myo1Yb26FbjTRQC39bjbooYclsQ3p0myo1YbW6FbjbooSUb6s+qxqq2FciLkQ5/EObZfj0vfQZzpSbqjKf2wWc99O7m+QxzYznvp3c3yGOSbZao4YwIAhEegiAIBCEIAiEEBACABBAEBACAAiAEAiCVAIBCAsIQgCIRqW1o+5WGJIGZAYOp3GuOiFczXCfsUDlYFB07c0XDv2KOEzJcL+0DkIDB2O4dz0Si5lrp2AchADr9xbjomJc2j7Z0PSAMoc2m+aHLU+ug2Uc2m+aHLU+ugEt9vu55ar11GA/vt93PLVeuowAfW9FaywhuJm+NYyzcsVDr8WPsAyqWb1eixqQy61o1p31Kqymx2TKqQck9vOOWVgDlnU0QaKhsVqC4tZmvZADYQBAWkUlQgXkJQIFhAEARSAQBEKAwAhAhQwAZFJXCGADIJFhDhUBSKRYQ4QBIZDhFhAEhkWEWEBSKRYRQApHdqvx6XvoNYHlqnx6XvoVJsnBfOe+n9zfIY5sZz30/ub5DIE2sUcMYKiCAj0IQhAIQQAEQhAIQAgIQQAIQAgIIBAEQggAQQAWAEAF0O8/D2SqpwaHffh6OdygestSk5uKNRC+vQesK5qQSXjMNo97VjIeFV7qoj19ZdfGB7a27tWuwoqSDhNF71lzUPBuFVJnEoOF1ekv8AcD3F9yxroxtjvDSu6GKHK08N4VUX9y/3Jadw9XJ6y6+MD6Cdzb3IrNR5Z+JWo2sifQ7Wwru5ljV1RrOG/EKLzqKqyB58o4td80OWp9dBu4cWu+aHLU+ugEl9vy55ar11GA/vt+XPLVeuowA0rWtzTpNxmcIMC3pc46DokzamFFkCrs4yNVuecyImUeLmtcKuNSyzelC3fdVIhupAOfqLzTfWTKpzz3yo+vK613q7UnYZYAEIICLQAuAUQvApLooFYFBeUAAICiCku1QKwWRCyqWRyARwKCTEhXEBTCFGFkUvKAUiBIgVVCoFoDAJDiAEBgGIrIFoBAMQZAWEGEOIWIBI0dW359P3kGquHFsvx6XvoEmyVc576f3N8hkGvnPfT+5vkMcs2yzRwxgsVCIjYCEIAgCAAiEIABAIAiEIABEIBBAEBCEIBCEICwQBAKHc5h/OOGQ7PMborcQHrF29Us3oq5Y1Hgdf53d57lesc22c5PWlDwyv8y94DQABAEnpfMneNyan8yAe15vc3mGSnYch+IFTnGwdZmpi1KKIcln9uGoiAefuJ7TfNDlqfXQgUc2m+aHK0+ugFr7flzy1XrqMDQvt93PLVeupngbdhGPKdfSqJlRTgaFXmnSbrb6UiAOuWtkwIYdas9JY5V5viMqpfKzVrMupePfrApXakrGozlJXPVxEABBCACwYLQBWQyGAwBWQyWwigASCS8FoAjkMloFAFQ5S0F0QCIRNAoAiCXgMAUASwGAIoDBOiFoAgwCwjmA4QG+ErhHQAG2EcWyfHpe+gFRSe3T41P3kCTZOCHOe+n9zfIY5sZz30/ub5DHLNrFHDGBBEIj0AQhAIQggIQhAAQggIQRAAQggAQRAIQhAIuiFSZoFkbIlYP6eDtHnNMcmRQMKDr8yNxVTDWgvYdFmduCtlA9Ou54I5uv1Twi4+d3ee7XDm8w7L+08PuGrjd3gZYifAvELAoEJPT+ZA82pLTpriQD2PNKVG0EVvEcdn9VWpl1nbZuY9LdqIuVThs/tc2rC9gHBqObTfNDlafXQbqOLTfNDlafXQC1/vu55ar11GBoX2+7nlqvXUYAPLenzjoU06lBKKSNrFYeat4iubxgcq5ZVSMkckEYCCVCAS5QsBKhaCiKGQLQIUgkCwgCAtBaCKS2ICWCkIVxFZAuEoGQLliKRSBKIpIJAkCRKoJAdIpNIxkkxgOBIo3xBRwDuUI1IpKyA4xE1H86n7yDIcWy/Gp+8gSbJwVzkn+S/ub5DIg3s4JNw7ub5DLwlm1ijhjA1wiwjmBQR6G0CwjmBQA2gMDiBQA2gUDnCDCA3gMDjCHCA2gMDmBQA2gWEcQCAG8BgmgQEEAgngooEQQqVAkxEiVFTtGwgH7a7k7TatbrA5FOXkcNdAHpjL9H5HaiyUbat2IcRRrRkU9TzdmZte1StTrJi14VAZU83W8ZWyPqmaqDML0YkdpjPr1aNXm3di9g/qZyqI3jRANJM2Wzm5GIq9xFTzXQV6ep2nObuupu+WCqfiJ7XzAHqeBtGngptTIeV/iXLUav0HP8A2ZeI5DOWcFvVRYiAObcOLTfNvy1ProNlHNpvmhy1ProBe+33c8tV66jAf32+7nlqvXUzwHlGrzSyanDZbEGbb0+ddBvssmqoHPuwuIVppxnXOsGINW2DXuwzH1A5fAVVpsXLKdFcLVlU7TIcoEYSoALyGSgQLyKQBAMikMBhAKyKRAAMikQgLSKShbIApFIBAWkUlSwBkElSoEsikiEBNiDJAECfEWxDaQZQHEjq1X49L30M2VHlpvil76BJsnBq5w3w7ub5DKkf5xX/ACXdzfIZElm1ijhjBPIiCRSR6J5FJBIpAnkMoN5FIDgEkMgkCeQyN5FIDmQSNpFIE8ikbSKQJ5BJBIpAlkqRyEAlSRGqpbAvEBAInwFuaUBsSoSc2TspyBek1VVDuLV9xTp+qqon6mDasaxyK5JTiPZbDOljzDWOpYISFTCiov1A5PNlG3uaipdPwqupZjynXu/D9LXSqrH1yp/dBpdV80VUX4ao76NwnP2+d3Wbop4lb2IuXIA/vPwxUeirTwPX+ynm9fNdehUwVKb2L9Uyf31HtVr+IaFZUbUY6mvHrQ6ZVt7lkLzdRq8cKB85bjXLsqMVTLurKpbZHpB9EvZRY5aTHNiJ1zH0PNfxMjW4E7U7QPJVHVpvmhy1ProQO1k9pvmhy1ProBa+33c8tV66jFEH19vu55ar11GCAatquF+s6inWVuo4tFgepcK1AOuWsity6zIq1HKmQyOFuJadZ9VcKJrAZPRVyjNxvXDUpJl1nPuWQIxCCAghLAVLEkBgCMJNAIAigEE0CgCKBQTQICKBYSUIEMBgmgUAQwKCWCREAbYRYRyoAIMIsJOICDCLCThgBvhFhJxKBDhHlqnx6XvoQjq2/Op++gSbJwWzlvl3c3yGQdBft/yHdzfIYqtNTaxRwxghCSQGDL0RQKBwiBgBtAoHWEWEBrAoHMCwgNoAO8IMADWAQOcIFQBsAngoqAQgLFQCXQjCB0lkyk/I9YNupaUFT1XocU16t1DhK7o1gbbbNHOhHNJXWrmdFTn0rO41JErv41A1XUVbraTMt+3A7+xl8LqLCKuo3KWeKjGomFqoicQEiU2xxGrSYiNnEc5UvnVFnChFw1yAdQ9MiriMJKzpcuuBmt6q5JKsqshcusDo7a7lsug2WVUqZMSJPEpxVGi17oR2s6y2zTzipLlT9QNunUo01RFf/s5nP9wyqjEaqLBu7hq5YR6qcjnjN62aplVQOJcT2u+aHLU+ug3UcWu+aHLU+ugF77fdzy1XrqZ5oX2+7nlqvXUzgHVJMawSuYrVDbNl50KUUcBzaNk1ltattTbWWER2ofNtmtXKSc9h9Wr6zYyIBy1Z7nrKrIyNOthVVhIGCsgCIsKBAWLFBATSWIAyA4R0BxDYMgTyCSEIE0gkiABNJaSAIE0gIggSSWxEIoAlkEkcBgC+IGIECgC0lpK4S0ACRYi2ErhAGIeWy/Hpe+hAjEJ7ZPj0/fQJNk4H9+vx3dzfIY6mhnFYuXdzfIZMmptYo4YwXERhMvRJJeRuGQJsQZIZKyBNiFiIJKyA5xixjYUgT4iuIiABJJRVKlQEVLAAAS0BgAoTQJsE4FEYOOaUcUmYjQZbK/IioBjc2pIjPoaNW3fR4hqiuAhVqp2FcKjl2LtQmpYV15AGKW7nmxSzY5yIuNqD1rGYVVDm6lZ6OVEcusDt6WZFSFSu39FN6hb16D2olVHIcRY3uBvrYlU2aWcebdlRVQD0WxqKtRzXr+pxH4n/AG5ZHDM9tpullM5vPOc+Gx6mGAOEdrJ7XfNDlqfXQgcT2u+aHLU+ugF77fdzy1XrqZxo32+7nlqvXUzwHNOotNZQ0G3T5GduxHuhTarUGNZKawG9S6dGXWZb7h7u0geuUiAkVyr2lZKhAIYAXAEBguXAiwigmgQEUCglUAEcBglQsqAQwKCUIEMBgkABUUFwgRwXRBBkCsCgIgEEQpAuggSSAABaRSBUcW/59P3kIB1b/nU/eQJNk4K5xT/Jd3N8hkwb1+k13dzfIZkGptYo4YwNoBA7wiwmXoawKB1hFhAaigcQCAG+EGEdQKAGuEGEdwKAGmEWEdQCAG2EWEdQCAGuEOEcQACCBQTFFAoLEJSoE6VXN1KSsuXtXWoxEai2MYHR3TWUqNq5Ey1KbnOWVyqj1TjM1j0VcqGhnDe9jyT/ALxTCRYOyrmuYiu8iL68iIrqiIzsiJsctx96Pv8Aed6q36pbaYF/Z/tdpG6E/b5RvTqQarYe3jVewz3vmO2vPydOUaGZzjU1t8u0qjmKbT83uRuLCqd5lOtnIo73zHbXn5G7Gg9oPtUyVGY/1X/4p1FKjmuq2ObRHe87acYlo9TYoZvqu+Vco73zHbXn5GUaHV0s12DlX1EX/wD07ac7na1oW0c0zB+qr5VN2yoVKWt3blkZZ/iGQqDvfMdtefkZRoeeK5eMc2r3cJoZf+Wn10Ga6xzab5octT66DvfMdteepuxohNevdwu5y/8ANV66jDG7jHl9vu55ar11GAjm+Yj/ANrz1Mo0Q0bX4lREdlQ369pTbTVWpC/qcrTerFlDW4bVc3CXvfMdtefkZRoZTlei6yLnHcfk2D6Z1tIXMbrHe+Z7a89TKNBtjdx+QPOO4/IJWgwjvfM9teepuxoW5x3H5A43cZGqQVHe+Z7a89TKNBxjUtjUayGR3vme2vPyN2NDp6jldm1k/tuFRO7BPlUwZNh/9Mb/ACV+7QwJOa869/4tX/TmuLK/EnyhNIJIhHm6k0hkgkMgSSKSKRSBOCSKQyBLiBJFIpAlkMkMikCWRSRSGQJkUMkEhkCaS2IbyKQHMixDaQyA4xDm2Wa9L3kM+R3ar8el76BJsnBo3y/Hd3N8hmSPM4r/AJLu5vkMmSzaxRwRgdYhYhpIpI9DvEHEM5FiAdSVkb4hSA6kEjbELEA6kqqjfEKQJ5FI3kUgOZBI3krIDmSsjeRSBNJWSIIBKhAABBCiGqbYxgb+cN72PJP+8UwEOhv0m3seSf8AeKYaNLX1LzxK/dLm5fp/NX7pWaa1tjxoqdgzZTk7fMTLTnlS5yN7OKTDpaG6D3Ukp1GIqccHPuY6q71EO9zhaZsbTV9KvC9GZOCa9aL8VOoiwoE/MVqaesxyfWCnx2L6joPQrL8R0XtbTuaScWJERU/VDp2Us1Xk4EoOVUy4ci//AADyRrLxzcjpRTEzhRrsai1HSd/VYzN99zVJ3OU1VMkzE9n6GX+JFarW4UjIB5Qo5tN80OWp9dBs7WObTfNDlqfXQCS+33c8tV66meaF9vu55ar11M4B9bMR70RTr6VoxPWhMhylmsVEO1Y9UycYEqWLaqK5rEyGJXpU0avYqG7wh9Jqo1dZlQ2pKv1gcy5Gp2DFymxUpJKwuQyajYAbSAQACEASjo3/ANMT+Uv3aGCbz/6Yn8pfu0ME1ede/wDFq8octxZX9c+UEAIDDqEQAgIQYFACUBaBYQKwIvhFhAjES4RYQIhEuEOECEBNhFhAhETYQ4AIADjCDCBAPLWeEUvfQjwju2T49L308oSbJwT5x3y7ub5DIg6C+bNd3c3yGZgNTaxRwxgZCHeErhMvQ2EOMIsIDYUDjCDCBAEmwl8ADUQ7wlcIDYA5wlMIEACWCkAVAFSgFpCUCBMiSS4CBFHSVAEjCVGIU5wnSonEaptjGBs3LUW3suSd94pnIz6GvWcxtCyxejd11Oko0c1VKMrUVro1Fr6l74lfucvL9P5q/dLh0XCPKdbBqNR9G1xZH5Bi9luiwjjDqVdcY9cKBKlOMqDJyMRcjiyU2r+4B2jqXcPG1qaLkcqLxoozp0W9uU6e2zdSrJqAioVaNNcUyvGplZ3u2V0bhU7Cjmyi5cOE5HPVmy3WGtgDhlHNpvmhy1ProNlHNpvmhy1ProBe+33c8tV66mcaN9vu55ar11M8Cam5WrKGlwqqN7RqOqIinWJQp8QHNLcVV4y9N1WouTs1nScEbhmDOrMS3pqrVlVAya1bDkQyFWSWoqqsqNgCEAQCXgqhYsDonf01v8lfu0MQ23f01v8AJX7tDDk1ede/8Wryhy3Flf1z5QMAgMlpMOpSC2EUhxQAIFApFICgsCRSBYJHIZAkERyWkC8AKYg4gLIgYKYgYgLiI5FiAsIpiFiAuObb8+l76DLEO7Z3x6XvoEmycGlerFd3cnkM3EOc4ui5d3N8hk4jU2sUcMYHklJG2IGIy9DqQyM8QcQDiQyNsQsQDtFQOJBniFiAd4kBKDTGLEA6VSNVIMRWQJVKEcgASlAgAQhBAshIBEJ0SAI4UuiKSpBZDVNsYwNm7Sbex5J33ijBFVDWuI4PZz6J33ijFF+ha+pe+JX7nLy/T+av3SgxKouae/UikyuRNSD+3qP1JCGHUzWWNeoqIjdZ09D8OXb9atb3qRsqVMsOhRkt/cqrkWq7J9QNZ+aKlH/laq/RTazeypSas1UT6HD0Lqsr/wBzjaZUucrubA7WhcqjlyHJ5/fjRFI23Ny1fy1MHOFatVyvbCAcu7WObTfNDlqfXQbKObTfNDlqfXQC19vu55ar11M80L7fdzy1XrqZ4D+1XDURTs6T0ckdpwTVVNQ9bXqt4wO9V6NZE5Tma0rM6jP4S+MqjR1w53aBWo0aqyCyvVSkqAIFARAAIYLQWBvP/pifyV+7QwJOgf8A01P5K/doYEGrzr3/AItXlDluLK/rnyhWQyWgUGHUrIi0CgCoS0CgCoQwGAKiLhAoAkgUARhLQGAIwwWgIFYFBIXRJAggMDjCCAIcI7tm/Hpe+hREHVunxqfvIEmycD6+sburXV7Lau9qo2HNpvVFydiokGZubfeyXPg1PNH1/VqtruRKlREhuRHORNXeZfPVvS1dN20s2sUcMYJtzb72S58Gp5odzb72S58Gp5pBz1b0tXTdtFz1b0tXTdtI9E+5t97Jc+DU80W5t97Jc+DU80b89W9LV03bRc9W9LV03bQHG5t97Jc+DU80G5t97Jc+DU80h56t6Wrpu2i56t6Wrpu2gTbm33slz4NTzRbm33slz4NTzSLnq3paum7aDnq3paum7aBLubfeyXPg1PNFubfeyXPg1PNIuerelq6btoOdrelq6btoEu5t97Jc+DU80W5t/wCyXPg1PNIedrelq6btoOdrelq6btoEu5t/7Jc+DU80G5t/7Jc+DU80i52t6Wrpu2i52t6Wrpu2gS7m3/slz4NTzQ7m3/slz4NTzSHna3paum/aLna3paum/aBNubf+yXPg1PNDubf+yXPg1PNG/PVvS1dN20HP1vS1dN+0B3udf+yXXg1PNLbn3/sl14NTzRjz9b0tXTdtFz9b0tXTdtAe7nX/ALJdeDU80smbr/2S58Gp5ow5+t6Wrpv2i4RW9LV03bTVNsYwOuvLK85izRttcKqUnTFJ+T1115DKSyzh7Lc+DU80nvq1VLexipUy0nfvdl9dfqY7a9Zf+Wrpu2lr6l74lfuly8v0/mr90tHgF/7Lc+DU80sllnFNVrc+DU80hR1Zf+Wppu2jnm7iJ5yrpu2mHUCW2ck/8W58Kp5oEtL9P/DufBqeaWRlbtq1dN20bOqPav51XTdtA1aFC8prPA7lP/TU8066yqV0cnO21xHI1PNOFoY6i/nVNN203G0l9K/TdtA9C5pVWUoVIXVLHbDkc8WNw5iYKFZ30bTcvkQdW1ZWeq6q7J/+l2mNnm5fkw1Hfo5doHIOzbfTvS58Gp5pPa5uvkuKCraXKIlWmqrzNTImNP8A8mYtet6Wrpu2j2xfXrXdBiVXytVmuo5EX1kyaxYWW/Y6u83Xj7yvFrcQ6u/KlJ8Qr1y/KS3X4fv7fK2jUqt42Mcqp3tiTrbhM427F5upgRte4fUVz5Tm1qKrdc9nYhh3X4irLLbfE1Om5Vn9E1IfMnmLyquIuqKa4zmKv3R+n6/1/Wl8irmr6u8iLi7ovKYmYq/fH6frOXD/AFbmxKGbb3Ek2lz4NTzTYqZuucO9a/hP2GDb3NZ1WXVqiyuWXu2nRXDqrqf5j9N20+m+u5x+br5V3pc+DU80h3Nv/ZLnwanmkT6tdF/Nq6btpDz9b0tXTdtAd7m3/slz4NTzQ7m33slz4NTzRnz9b0tXTdtDwit6Wrpu2gPkzbfeyXPg1PNLbmX3slz4NTzRjwit6Wrpu2h4RW9LV03bQNDc2+9kufBqeaHc2+9kufBqeaZ/CK3paum7aHhFb0tXTdtLA6l1hebno3g1xPCFWOafMYEyxGoxdzb72S58Gp5o/dXq7mtXnKk8JXLjd6NPqYnCK3paum7aavOtf+LV5Q5biyvxJ8oO9zr32S58Gp5otzr72S58Gp5oy4RW9LU03bRcIrelqabtph1H25t97Jc+DU80W5197Jc+DU80ZcIrelq6btpXhFb0tXTdtAf7m33slz4NTzQbm33slz4NTzRlwit6Wppu2i4RW9LU03bQHu5t97Jc+DU80O5197Jc+DU80ZcIrelq6btoeEVvS1NN20B5udfeyXPg1PNFudfeyXPg1PNGXCK3paum7aHhFb0tTTdtAe7nX3slz4NTzRbnX3slz4NTzRjwit6Wrpu2i4RW9LV03bQH25197Jc+DU80O5197Jc+DU80YcIrelq6btpXhFb0tXTdtAf7nX3slz4NTzQ7nX3slz4NTzTP4RW9LV03bQ8Irelq6btoGkmbr32S58Gp5pMmbr32W48Kp5plJc1vS1NN20PCa3pamm7aBqcAvfZbnwanmhTN977Lc+FU80zOE1o/NqabtpZLmt6Wppu2gaaWN6n/AIlx4T/NJ6NjeJVYq21wnrIqrzT9hjcJrelqabto5t7iqtanNSp8yfvdtCTZOC1/vh3c3yGZBqX6/wCQ7ub5DMk1NrNHDGCsCgtIpI9FcIoLSCQBAoLgkAQKBSGQBAoDIZAEAgMgkAQKBSCQAqFYLyVkCpQtJUCpQsVAqIQixbGMDo84b3seSf8AeKYSKbucN72HJP8AvFMFC19S88Sv3OXl+n81fulp0X5Uk9GalrUtWIxcNRY1nmbGKbLHObBl1Oxuc2VKLEcitfKHHV7eHfKdpaZw9ekj2YmoqT3HqjKFjdo16U6a/oiL+oHz9TtUj5oHbbaFy1P9nv77K0cnrUKS97UOJztm/NdOk5zFayp2Na6cvdOQg4ZmbVfEVFymRnOyW2RJcqnaZrfOvs1SZf4g9ZslHl6jm13zQ7Pi0+uhA4cWm+aHK0+uhEdjnrOjarX0mLDnVaiVE6KNeqR+us4Af32+7nlqvXUYHPc3NNzExT+szM/8/py3HL0cvExT/tVNU/5/hI1VRchoc7WVIykFsiK9DrWUW8R0upzCU3O1tUq62jUd+23YjUVYGFyxjHakCuEWkqEeGDerKidhiv1gQCkqIC0hkoWA6J/9MT+Sv3aGAb7/AOmJ/JX7tDANXnXv/Fq8oclxZX9c+UEIQDLrEQBAKRSIQCCVCAZBIgAWkUlYEAZFIoFACDIIFABkMlYUUASSGSKAwoEkju2X49L30GGUeWs8Ipe+hGZsnA/zjvh3c3yGTJr5wSbh3c3yGVhLNrFHDGCsikthFhI9FJDJbCLCBWRSHCLCAJFIcIsIFZFJbCLCBWQSWwlcIAkUggABkElQAWkUkYgLCAEAwWRpdC6GqbYxgbt63Fb2PJO+8UzG0F4jYunYbey5J33ikLblsfKWvqXviV+5y8v0/mr90pqDUamqSz0UarXnUkDfnHIYdTbpphScSjxl2qL6tR+TiVUMRlbE2DSt7VKsw9EA1N1exXVHd7lUbcLa+Vc1SlGz5t6o6FOsp2dPCktA5tL7B8rVQyM4XfPNRIU77grFX5Ug5nPFCmylLUgDztdY4td80OVp9dCBxPab5ocrT66AWvt93PLVeuowH99vu55ar11M8DQtF+K07tiJGtDzlkzk1mij6/GoHavqImSZgYufLkVcqHNTXXLlHNu2pVcsuyIA+unU6iorUjjOcq4E1Dy5q4VwtMdVkCqiEEBBEXLA33/0xP5K/doYUHQO/prf5K/doYsGrzr3/i1eUOW4sr+ufKEMCgngBh1IoFhJQwBBhLYSZEDAEWEGEkLARYA4CUsiAQYC2EkLARYAYSZUKgR4RYSWRawI4K4SUQEcCgkABHA7tk+PS99BuO7f86l76BJsnA7vt8O7m+Qzcg8zi6Ll3c3yGViLNrFHDGByKRtiBiI9DqQSNsQMQE8hkbSKQHUhyDSQ4gHWQWQa4gYgHSwR5CHEVkCUjKSCQEpUQAAIIYARdEEiDhEQCKCRGl8hNkNU2xjA17ts29lyTvvFMtGqhtXCxb2XJO+8UzedjsLX1L3xK/c5eX6fzV+6VEa5dSKdJbZhv7umj6dH1V7VWDD4UqJkRDco/iHOFGnzbKuFO4w6mpT/AAjnJ2vm297jTb+FLui1XPrU2R9Tk1z3nF+u5qf3GlS+u6iQ6vUXvcoHT8DfRVZrNWPqb1Ks11JMTvWQ84ppXq6nqv6mlTp3aeqkgd8kRlccrnpIoplkbOo3qJlcpnX9G6Sijqi+qBxzhxab5ocrT66DVRzab5ocrT66AWvt93PLVeupnmhfb7ueWq9dRgA6t/nSTtmoyETChxNBfXQ69KjcKZUA1KdLIsIhjXLWsYuDI5dZqsrNj5jKuVZUWZA5Kog2NGrhyjJUQCMRaEKwAS0lYDBYHRv/AKan8lfu0MKTbf8A0xP5K/doc+avOvf+LV5Q5biyv658oTYgYiIRh1JZDJEKAJZFiI4BAE0hxEMBgCbEDERwGAL4hYgQVgCTGLGRwKAL4hYikBgC2IEhgtAFJFJeC0ARSo7tvz6XvoQIg8t0TnqfvIEmycCzlvl3c3yGSbOcUm5d3N8hlYTU2sUcMYIxEmEkRpl6G4h1hBADeAQO8JbAAzgUD3ALAAxgUD3ALAAygED7ALCAxgED3CDCA0wiwqO4BADWAwTwCAIi0hUoAZLI9SEBqm2MYHT3rsNvY8k77xTG5w079Zt7GMsUnTHZ666zCheJS19S98Sv3OXl+n81fuk+askmXiGbVVDYt/iqjcmXjyeU8840upnq5ULpWTtNqvbU2rhVzUX6Kip/oyn0ETUqKM40wHttdsorkTWd5m7OVtjbziHnVKiyfWU3WMtqcLiT/QzjSPSayU3qr6eXEcjnpXpRRq5ENO2zjRoswq9qp3oYeeb+lc00axUUZxpHnDtY4tN80OWp9dCByKT2qLwmhk/5afXQZg32+7nlqvXUYmhfIvC7nJ/zVeuowheIAtmcg8TnE4yOinrpJ0FTCjFiBnAxefc1NajR1RztagdKrqI4XiUZgSoC2FeJRQvEozCCGF4i0DMJEDBZELQWJgbbv6a3+Sv3aGDBvu/prf5K/doYZu969/4tXlDluLK/EnyhSAwhYRh1KiCFAKwCCUqBUIRAIIAgEMAEAFQBYqAICgSyZALwEKvkrIBgtJSQgIc2/wCfT95BrI5t1+PS95Ak2TgeXzZuHdzfIZ+FB7fui4d3N8hnc4am1ijhjBfCgoI8ZRXGXokUBDiBiAdIXGeIOMB6VGuMWIBzIJG2IGIB1IJG2IGIByAb4hYgJipDiBiAmUoRSCQJFKAkQFQFgQUPWXb2NRqNpLHa6mxV/VVSVJOHVOhQ8FmwzoDB196v+0n0p/hndjQ1EvanQoeCzYO2XU/NSoL/AOpmwx2tNqnRTBikd6v+0n0p+E3YdhmyjaXa4H29JXL8sMRPIad3+HrikmKlQouTiSmxY/0cnY3Draqyo39p21b8WVkyNpInlHer/tJ9KfhN2HB1P8Z+Gtb0Z5NuwdUnWtRzUWlRy/8A82ja8uK9/UxqzKv0GSW1Zqoqtgd6v+0n0p+E3Yd3ubbuVMNGkqdvw2mLnGhTtGzTpUU/9bVOwsKkUERVM7PqUktkj5lHer/tJ9KfhN2NDy9byp0KHhM2E1tePW4oJgofm0/+JnST6GQ5cpPab5octT66DvV/2k+lPwm7DSvb2o26uEwUMlaprpMX96/QY8OqdCh4LNhS/wB93PLVeuowEc1fx/vPpT/BuxobVK8c5yI5lCOSZsNt7qbWylOh4bTj2z2DvBVXjHer/tJ9KfhN2NBy+6qIuSnQ8Fmwg4bU9HQ8FmwKUqidhdaKqnyl73f9pPpT8JuxoRcOqdCh4LNguHVOhQ8FmwotBeIbK2B3u/7T/wCU/wAG7B7w6p0KHgs2B4bU6FDwWbDMUA73f9pPpT8Juw1eG1OhQ8FmwPDn9Ch4TNhkiJ3u/wC0n0p+E3Y0NWre1a1NtN2FGNWUa1rWpP6IMZIQnJP3mZm2qZmZ0zP6lNNNPDGWc5/50pZFJQRGkkikoICSQSUABLIiKRSBKGSIUgSyIikUgSyVkoICWREQpAlkMkMhkCWS0kEikCaR1bfn0vfQz5Hdqv8AkUvfQJNk4Hmcd8u7m+Qyjcv0m4d3N8hmYTU2sUcMYG0ChR1hFhMvQzyihR5hBgAaQooHeAOEBnABzhFhAbiHOArhAbgHOEorQISpNhKQBSQSIqARFRASIbFvbc8hioPGVXM1LAHQszY569gq2bHUtaGWy8qt1PUlffVamt6gNFoKilkoqpTnV4yVtdyKBOyiqLqNZrYSFQzOE1Czrio7sA6BjURMkGVXuVY7IiKM0uHJrlDbt6FncfmVMKgM6V9Vdka1P7Ghiu3Q5zJTiH7bO2t3YqdTEdNbqjklYX6Acnwi6bqYqIML64r1qfrsVE4z0dzUram6voc1nVrWWyogHlLie03zQ5an10IXaya13zQ5an10Avfb7ueWq9dTPNC+33c8tV66mcA9ofOh2LKeKJg4yisPRTsKVwxEyqA/bQRdcQKrSZS1ZfoN1uWdIj56n0gMq5c/XhhDnXnW1KyubGRTna0SBmALKVARYAQLEjYIwwA4lCiwRwooUC8oCUBChgA5ABwhwgVyAkthDhApISTCHCBGVJsJbCA3AOcIYAaiHeEWEBplFlHUBwgNMooH0FIAaQPbVq8/S99AIg5t0+PT99Ak2Tge3y/Hd3N8hm4h3nFf8l3c3yGTiNTaxRwxgd4hYhpiBiMvQ8xIDENMQMQD3EDEM8QpAdSgsQ0kUgPMRWRpiBiAcq4piIJBIE8lFUikEgFSohAAQQgImRJI0QdNAphUsjFJCZFAiSmTNplkyjhEcnYA6t7N9dUhUQ661/Dbq7kRa7G96ocQyrUauRVQ1qVZ/a9391A7r/qds1fiXqJo7SX/AK1mtrVXhqKqJ0m+TWcYlVq63Kv6mS+pFVYmAOhW3taT1ayrig07So2mrssocPQpLXqqiLB1dHNNRUyPA6ll7TYzDkl3acvnaox1FYcihqZre1PzFMW+sX0qOLEqoBxTtZPa75octT66Ddw4tN82/LU+ugF77fdzy1XrqZxo32+7nlqvXUzgJWoqrkNNLarEwNLdJqIdyjka1EA5NLasoG0HyqKsQdkxrXdsGTetajJZr7QMF9TBkQy3OVxNUGoCCAIBLQAsBdEJMMlS6OgBYRYQ4hYgFhkOGBI+BK6QBAYKyT06iM1pIEcCKq7KCQJBQVxFsYFkCQq4SOAnERYgYwJgkOIWICRQEeIWICUsQ4iuIBxkJ7f86n7yDCR1bL8el76BJsnBNnHfLu5vkMg3L9JuHdzfIZeE1NrNHDGBuAcQVgy2hES4Q4QIYBA4wgwgQCgmwhwgN4FA4wggBsIcQDCBBAoHGEOEBrAYHECgBvASWAQBQOIRUC+JS2NSAQDxtVUHiXLlSDIJmuAfortZZXP4wU3ob1varcrCNV3HAHOq9ydoUrKn1N2tYo1yoi/ooyW3w9gCoXSsWUQ7jN+cFf6qopxbWImtDaoXVOnkRAPQEVK2VE+U57PL/wDGhEgomdGU2w1FXjMPOGcW16OGIUDhHaya03zb8tT66EDie03zb8tT66ASX2+7nlqvXUzjQv8Afdzy1XrqZ4Dmk7C9FN6pcpCQuU5tuVR+lN8agNm1uMvrKOLlzF1KcyrsBE6q5e0CarE5BlAZKgIQQgAJeC0ARhJYKwBURaAwBQRJAoAoHKXgUAUESQKAIwwSBAjgWElEBFAYJBQBSAwSQGAKIgYJUQWQCJGyXwoS5CoESNkeW7IrU/eQi1Dm3X41P3kCTZOCW+3w7ub5DNH2cFi4d3N8hlyam1ijhjBKAikGIy9EwSHEDEBOAhxAkCURFIJAmARSCQJREUlZAnCQSKQJipHIpAuVKSCQCVBIgAAvAIAqXQrBM1AJmHf5mzitjKtRFVcmU5mzt+dciLkHr2JSeqIurtA76m6ne1Zq0fmXW06Wp+G7Soksc9i/oqf2OOzLnCjQqpzq5P7welOzvZNSednuRQPKs4Zvq5vqYVRKjexUTsOe52k1crIU9kqZ/s1lEp1Kne1I/wBnlF9/k1nPaxGI5cjU7ANjN9S3uGYMCI7jIc62VClbqrUTER5vtloriXWPM6uRbVeMDyZ+sntN82/LU+uhC8mtN82/LU+ugFr/AH3c8tV66meaN/vu55ar11M4BzRT1kOswolOfoclTWHIdRz9PDr7AOXqr6yjce1my5YGcKAAgCBYsUkUgTIXIJLyBMVKYhSBLkKlJFIEiFiGQyBJIpI5FIEkliKRSBIoJKSEC4ikikCURFIJAnktI2ktIE0hVSCRYgHCKWkbYi8gTyTW/wCdT95BhiHVs749L30CTZOCfOO+HdzfIZJvXzZru7m+QzcBqbWaOGMDEQ6wCwEehqAdYAYQG4IHOEWEBtAoHECgBvAB1hBhAbCHGErAEACSCsAUKhUACEAABHNJMTkQbErFgDs6ea0qIkQPNwaitlIOTZd1G6nKg/TOdwiQlR39wIq1i6ksKQNoFH3NR+VXKpElR3GBrU3K3ISq5V1oZCPdxk2N4G5SVEFUunzhRRjRuGsX12yhv073N6fNTWSDDSvXcqoiqPGUbl3rHUMvczrTjm1R/GN+HW8ojEWAM9vDewy7zhWD4mo7plZEb8mT6mdnN2K1nDBR5Q4ntd82/LU+uhA7WT2u+bflqfXQC99vu55ar11M80L7fdzy1XrqZ4EjUxLBrMsqrkkzqHzp3nf0pwIByyWdRFLOtF7UOuRuSSGsiKiRrUDh3W8DNzcJ0V1RqsSYyKYD57QGygEAC0hkqIC8hKlgEEQgEEAgEEAgCIAsoCDIAwARSFQQAJFJbCoIArJaQQocIBkEiwqDCoBkMgwhwgCR3ar8el76DbCObVvx6Xvp5SMzZODZvV+O7uTyGfKE2cHRcu7m+Qy8ZqbWKOGMDySsoNMQMRl6HcoVka4hSA5xAkbYhSA4lBSNpFIDmRSNZFIDmSOSGQSBLJUjkABUoEAAAWFACLoVJmoBZGkuBQIqIOEegEOBSZKZbGhLM9oGtbWHPa6iNOns8xW9ZypVu2MRPqhwzXOTJJO3HPzL/cD0pcxZlpzjvFcv0VP/AIMVt/w/QlHVHu4jmadenTSHRJi3a86+WwBsuqZv5xebasTkHzFoIqOZCHK29HL6+o66jZ29RnzQveBuLeUKlNJciKhj5zvadW3RjVTISbl02uhVGucc3U6VDGyVA86drJ7TfNDlqfXQgdrJ7TfNDlqfXQC99vu55ar11M80L7fdzy1XrqZwE9NcLkU6qldoifMcm1MSohsJZOhAN7hlPtUbrdscusyuBPIX2r2ORsAa9SvjT5pQ52q7KPq7ubbgMVVABUsAAhEWAsiFoChLkAhwhgdZIIgIsJbCWJvVQBvAYJVgGQCOC0FiyARQWwlgyAFRCsFwACC2EQgBAoDIUUCsBgMoVkBQCAyFAFA6t0+NT99Bsqji2X41P3kCTZOC2ct8u7m+QyTdv0m4d3N8hl4TU2sUcMYGwh1hK4TL0NwwOEaWgBtCggdwDCA1gUDmBQA1gUDqAQA1gEDqAQA2wigcwKAGuEWEdQLCA1gUDiCsAQhLKhQBBlSpUCXESo4bFkA0GrPaTYXcajBqmpTdMAM3I76lfWQ7GlaVKrJSli7iCpZPYkqxze9qgcujqn1H1N1xkhVHbaaoupFHjaisyYAHVtcXOL1pU1L2o91q7FqMzhD01UlGt3dVn08KsVEA45+sntN9W/K0+ug3drJ7TfVDlafXQC99vu55ar11M80L/fdzy1XrqZ4Dil8yd52jHYkQ4diwqHQMuWtTWB07ET5l7BrWczGj+ztM1LtI1kdS7pqkEDW+Y17sbPlOfU0KlbFkTUMVUojEWAAiwoDABktJSAwBfELEUgQF8QpKwIC8gkEBgAyHEKA4QBiFIYFACxAktAoArIpDAYArIZLogYAjFJLAYAhylspLhLYQG46tvz6XvoUgnt/z6XvoEmycDu/3w7ub5DNk2ry1rVaznMbKQnaidneMOA3PQTSbtNTaxRwxgZyCR5wG56H2m7RcBueh9pu0y9TSQyOuA3PQ+03aLgNz0PtN2hDWRSOuA3PQ+03aLgNz0PtN2gM5BI94Dc9D7TdouA3PQ+03aFM5FI74Dc9D7TdoeA3PQ+03aAzKj7gNz0PtN2g4Dc9D7TdoDKQjvgFz0PtN2i4Bc9D7TdoDQEjzgNz0PtN2i4Bc9D7TdoDCSkmjwC56H2m7Qbn3XQTSbtCM1Shr7m3XRbpIDc266LdJArHAbO5lz0W6SC3Muei3SQDGLIa+5lz0W6SB3Oueimk3aBmIg/oosoPqeb63a3/bdo9p2lRqzhTIvGm0D0LM9re4MdNUhOxUPSKXOvbFai37ML+inG2mfm0qTGOoRhSPVcg//wCxUuyi/STYEbFXNFjX+a3a1eNvq+TIcBnfM6WXr0VcrV7FywdQv4ipdlF/6uQ5bOOdK181WYWsZ2Rr/wBgcxZXSK9GPRNZs50RnBl9WFMa2tGtqY3u1d5tZwqpXt+bYkr/AG8oHkb9ZPab5t+Vp9dB47N9yq/Imk3aT22b7lLigqsSEq01X1m9jk+oGdf77ueWq9dTPOjvc33Lrq4VGJC1qip6ze16/UY7nXPQTSbtAzWpKmmlssSSMzfco5PUTSbtN91vUwQidnGgHHvdhyIN1U2H5vuVX5E0m7SLc666CaTdoGWI1NzrroJpN2i3Ouugmk3aFZhdDS3Ouugmk3aSJm256KaSAZcFoNRLC5b+xNJu0PAbnoJpN2hGZAoNPgNz0E0m7Q8BuOgmk3aFZYjT4DcdBNJu0HAbjoJpN2gZsANPgNx0E0m7RcAuOh9pu0IzQmlwG46H2m7RcBuOh9pu0DOCaHALjoJpN2i4DcdD7TdoUwEaHAbnofabtLcCuOh9pu0DNCaPAbjofabtFwK46H2m7QM/CVNPgdz0E0m7Rbn3PRTSQDOQsP8AgFyn7U0kLbn3HRTSQIYoEfcCuE/Ymk3aDgdx0PtN2gMxQo84HcdH7Tdpfglx0E0m7QM5UJ7dPjU/eQccDuOimk3aS0bSuyqxytyI5FXKm0JNk4P/2Q==", non: "data:image/jpeg;base64,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", roi: "data:image/jpeg;base64,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" };
+  var S = {
+    idle:     { badge: "NOT MONITORING", color: "#9aa3ae", img: IMG.non, dim: true,  state: "IDLE",       count: "0", last: "—",           lat: "—",     roi: false, btn: ["start", "開始監控", false], hint: "與實體按鈕同步；LED：熄滅",
+                log: [["10:14:58", "c-idle", "IDLE · 等待開始"]] },
+    starting: { badge: "STARTING",       color: "#9aa3ae", img: IMG.non, dim: false, state: "STARTING",   count: "0", last: "—",           lat: "—",     roi: false, btn: ["start", "啟動中…", true], hint: "已送出 START_MONITOR（cmd c7），等待確認",
+                log: [["10:15:02", "c-idle", "web · START_MONITOR (c7)"], ["10:15:02", "c-idle", "STARTING · 檢查 RCM / aoi-api"]] },
+    non:      { badge: "NON CONTACT",    color: "#e3a23a", img: IMG.non, dim: false, state: "MONITORING", count: "2", last: "non_contact", lat: "84 ms", roi: false, btn: ["stop", "停止監控", false], hint: "LED：慢閃",
+                log: [["10:15:02", "c-ok", "MONITORING (c7 OK)"], ["10:15:09", "c-ok", "CONTACT #1"], ["10:15:12", "c-warn", "NON CONTACT"], ["10:15:20", "c-ok", "CONTACT #2"], ["10:15:23", "c-warn", "NON CONTACT"]] },
+    contact:  { badge: "CONTACT",        color: "#46c47a", img: IMG.contact, dim: false, state: "MONITORING", count: "3", last: "contact", lat: "91 ms", roi: true,  btn: ["stop", "停止監控", false], hint: "LED：恆亮",
+                log: [["10:15:20", "c-ok", "CONTACT #2"], ["10:15:23", "c-warn", "NON CONTACT"], ["10:15:34", "c-ok", "CONTACT #3 · LED_ON"]] },
+    error:    { badge: "ERROR",          color: "#ec6b6b", img: null,    dim: false, state: "ERROR",      count: "3", last: "—",           lat: "timeout", roi: false, btn: ["start", "重新開始", false], hint: "RCM 無影像訊號超過 5 秒；LED：快閃",
+                log: [["10:16:02", "c-warn", "snapshot: no live video"], ["10:16:07", "c-err", "ERROR · RCM no live video (5 s)"]] }
+  };
+  var $ = function (id) { return document.getElementById(id); };
+  function show(k) {
+    var s = S[k];
+    document.querySelectorAll(".mock-switch [data-s]").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.s === k); });
+    var live = $("live"), img = $("liveImg");
+    var ph = live.querySelector(".ph"); if (ph) ph.remove();
+    if (s.img) { img.style.display = "block"; img.src = s.img; img.style.opacity = s.dim ? .45 : 1; }
+    else { img.style.display = "none"; var d = document.createElement("div"); d.className = "ph"; d.textContent = "NO LIVE VIDEO"; live.appendChild(d); }
+    var b = $("badge"); b.textContent = s.badge; b.style.color = s.color;
+    $("mState").textContent = s.state; $("mCount").textContent = s.count; $("mLast").textContent = s.last; $("mLat").textContent = s.lat;
+    $("roi").innerHTML = s.roi ? '<img alt="AOI ROI 影像" src="' + IMG.roi + '">' : "無";
+    var btn = $("mBtn"); btn.className = "big-btn " + s.btn[0]; btn.textContent = s.btn[1]; btn.disabled = s.btn[2];
+    $("mHint").textContent = s.hint;
+    $("log").innerHTML = s.log.map(function (l) { return '<div><span class="c-idle">' + l[0] + '</span>  <span class="' + l[1] + '">' + l[2] + "</span></div>"; }).join("");
+  }
+  document.querySelectorAll(".mock-switch [data-s]").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.s); }); });
+  show("idle");
+})();
+</script>
+<script>
+(function () {
+  var mon = "contact-monitor", web = "contact-monitor-web", pio = "contact-panel-io";
+  // [標籤, 值, 說明, 是否已修改]
+  var SECTIONS = [
+    { id: "aoi", name: "監控 / AOI", file: "monitor.json", restart: [mon], dirty: true, fields: [
+      ["AOI API 網址", "http://192.168.137.101:8000", "aoi.url"],
+      ["類別", "01_Series ▾", "aoi.category"],
+      ["判定頻率（ms）", "200", "aoi.interval_ms · 100–5000（原值 300）", true],
+      ["逾時（秒）", "3", "aoi.timeout_s · 1–30"],
+      ["連續相同判定次數", "2", "debounce_count · 1–10"],
+      ["異常判定時間（秒）", "5", "error_timeout_s"]] },
+    { id: "rcm", name: "RCM 影像來源", file: "common.json", restart: [mon, web], dirty: true, test: "測試連線（取一張影像）", fields: [
+      ["RCM 主機", "192.168.3.5", "rcm.host（原值 192.168.3.2）", true],
+      ["帳號", "admin", "rcm.username"],
+      ["密碼", "••••••", "rcm.password · 留空表示不變更", true],
+      ["驗證 TLS 憑證", "☐ 否", "rcm.verify_tls · KVM 為自簽憑證"],
+      ["逾時（秒）", "3", "rcm.timeout_s"]] },
+    { id: "roi", name: "ROI", file: "monitor.json / web.json", restart: [mon, web], test: "在目前畫面上框選", fields: [
+      ["capture_roi x, y", "526, 211", "送 AOI 的裁切起點（像素）"],
+      ["capture_roi 寬, 高", "1152, 863", ""],
+      ["display_roi x, y", "526, 211", "網頁顯示範圍（藍綠色框）"],
+      ["display_roi 寬, 高", "1152, 863", ""]] },
+    { id: "panel", name: "操作面板 IO", file: "panel-io.json", restart: [pio], fields: [
+      ["驅動", "gpio ▾", "driver · gpio / uart"],
+      ["TCP port", "57310", "listen.port · 修改時也會重啟 contact-monitor"],
+      ["按鈕 GPIO / 電位", "14 / 高電位", "pull: down"],
+      ["LED GPIO / 電位", "15 / 高電位", ""],
+      ["去彈跳（ms）", "30", "debounce_ms"],
+      ["長按（ms）", "3000", "long_press_ms"],
+      ["心跳逾時（秒）", "5", "heartbeat_timeout_s"],
+      ["UART 埠 / 速率", "/dev/ttyAMA0 / 115200", "driver = uart 時使用"]] },
+    { id: "web", name: "網頁", file: "web.json", restart: [web], fields: [
+      ["網頁 port", "8010", "listen.port"],
+      ["影像串流 fps", "10", "stream_fps · 1–25"],
+      ["指令逾時（秒）", "3", "command_timeout_s"],
+      ["登入閒置逾時（分）", "30", "auth.session_idle_min"]] },
+    { id: "log", name: "日誌", file: "各服務設定檔", restart: ["依修改的服務"], log: true },
+    { id: "sys", name: "系統", file: "common.json", restart: [mon, web], fields: [
+      ["Redis 位址", "redis://127.0.0.1:6379/0", "redis.url"],
+      ["設定備份保留份數", "20", "config_backup_keep"]] },
+    { id: "acct", name: "帳號", file: "web.json", restart: ["不需重啟"], fields: [
+      ["帳號", "admin", ""],
+      ["目前密碼", "", ""],
+      ["新密碼", "", "至少 8 碼"],
+      ["確認新密碼", "", ""]] }
+  ];
+  var current = "aoi";
+  var LOGO = document.querySelector('#mock .logo').src;
+  var TOP = '<div class="mock-top"><span class="brand-wrap"><img class="logo" src="' + LOGO + '" alt="JTRON"><span class="brand">AH9710 Contact Monitor · 系統設定</span></span><span class="conn">';
+  function esc(s) { return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;"); }
+  function field(f) {
+    return '<div class="f"><label>' + esc(f[0]) + '</label><div class="inp' + (f[3] ? " changed" : "") + '">' + esc(f[1]) + '</div>' +
+      (f[2] ? '<div class="hint">' + esc(f[2]) + "</div>" : "") + "</div>";
+  }
+  function logTable() {
+    var rows = [["Log level", "INFO ▾", "DEBUG ▾", "INFO ▾"], ["存放位置", "/media/disk/log/{service}", "同左", "同左"],
+      ["命名格式", "{service}_{date}.log", "同左", "同左"], ["單檔大小（MB）", "5", "5", "5"], ["保留檔數", "30", "30", "30"],
+      ["保留天數", "0（交給 log-cleaner）", "0", "0"], ["輸出 console", "☑", "☑", "☑"]];
+    return '<div class="table-wrap"><table class="logtbl"><tr><th></th><th>panel-io</th><th>monitor</th><th>web</th></tr>' +
+      rows.map(function (r) { return "<tr><th>" + r[0] + "</th>" + r.slice(1).map(function (c) { return "<td class=\"mono\">" + esc(c) + "</td>"; }).join("") + "</tr>"; }).join("") +
+      '</table></div><div class="hint">各服務可分開設定，例如只把 monitor 調成 DEBUG 來查 AOI 判定。</div>';
+  }
+  function editView() {
+    var s = SECTIONS.filter(function (x) { return x.id === current; })[0];
+    var nav = SECTIONS.map(function (x) {
+      return '<button type="button" data-sec="' + x.id + '" aria-current="' + (x.id === current) + '" class="' + (x.dirty ? "dirty" : "") + '">' + esc(x.name) + "</button>";
+    }).join("");
+    var body = s.log ? logTable() : '<div class="fgrid">' + s.fields.map(field).join("") + "</div>";
+    return TOP + '<span>admin</span><span>登出</span></span></div><div class="set-body"><div class="set-nav">' + nav + '</div><div class="set-main"><h4>' + esc(s.name) + '</h4><div class="svc">寫入 ' + esc(s.file) + " · 套用時重啟：" + esc(s.restart.join("、")) + "</div>" + body +
+      '<div class="set-actions">' + (s.test ? '<button type="button" class="sbtn" style="margin-right:auto">' + esc(s.test) + "</button>" : "") +
+      '<span class="hint">2 個區塊、3 個欄位已修改</span><button type="button" class="sbtn">放棄修改</button><button type="button" class="sbtn primary" data-go="confirm">套用…</button></div></div></div>';
+  }
+  var VIEWS = {
+    login: function () {
+      return TOP + '<span>未登入</span></span></div><div class="login"><h4>系統設定登入</h4><div class="f"><label>帳號</label><div class="inp">admin</div></div>' +
+        '<div class="f"><label>密碼</label><div class="inp">••••••••</div></div><button type="button" class="sbtn primary" style="width:100%" data-go="edit">登入</button>' +
+        '<div class="hint" style="margin-top:10px">連續 5 次錯誤會鎖定 5 分鐘。監控畫面不需登入。</div></div>';
+    },
+    edit: editView,
+    confirm: function () {
+      return editView() + '<div class="overlay"><div class="dialog" role="dialog" aria-label="確認變更"><h4>確認套用以下變更？</h4>' +
+        '<div class="table-wrap"><table><tr><th>區塊</th><th>欄位</th><th>原值</th><th>新值</th></tr>' +
+        '<tr><td>監控 / AOI</td><td>判定頻率（ms）</td><td>300</td><td>200</td></tr>' +
+        '<tr><td>RCM</td><td>RCM 主機</td><td>192.168.3.2</td><td>192.168.3.5</td></tr>' +
+        '<tr><td>RCM</td><td>密碼</td><td>••••</td><td>已變更</td></tr></table></div>' +
+        '<div><strong>將重啟：</strong>contact-monitor、contact-monitor-web</div>' +
+        '<div class="warnbox">目前正在監控中，套用後監控會停止，LED 熄滅；網頁會中斷約 5 秒後自動重新連線。</div>' +
+        '<div class="set-actions" style="border:0"><button type="button" class="sbtn" data-go="edit">取消</button><button type="button" class="sbtn danger" data-go="apply">確認套用並重啟</button></div></div></div>';
+    },
+    apply: function () {
+      return editView() + '<div class="overlay"><div class="dialog" role="dialog" aria-label="套用進度"><h4>套用設定中…</h4><ul class="prog">' +
+        '<li class="ok">✓ 驗證設定</li><li class="ok">✓ 備份 common.json、monitor.json → backup/20261106_101502/</li>' +
+        '<li class="ok">✓ 寫入設定（config_version 18 → 19）· 記錄 CONFIG_CHANGED user=admin</li>' +
+        '<li class="ok">✓ 重啟 contact-monitor → SERVICE_STARTED（pid 2314，10:15:04）</li>' +
+        '<li class="run">⟳ 重啟 contact-monitor-web → 等待重新連線…</li></ul>' +
+        '<div class="hint">任一服務在 15 秒內沒有回報啟動，會自動還原備份的設定並再重啟一次（CONFIG_ROLLBACK）。</div></div></div>';
+    }
+  };
+  var box = document.getElementById("setMock");
+  function show(v) {
+    document.querySelectorAll("[data-v]").forEach(function (b) { b.setAttribute("aria-pressed", b.dataset.v === v); });
+    box.innerHTML = VIEWS[v]();
+    box.dataset.view = v;
+  }
+  box.addEventListener("click", function (e) {
+    var sec = e.target.closest("[data-sec]"), go = e.target.closest("[data-go]");
+    if (sec && box.dataset.view === "edit") { current = sec.dataset.sec; show("edit"); }
+    else if (go) { show(go.dataset.go); }
+  });
+  document.querySelectorAll("[data-v]").forEach(function (b) { b.addEventListener("click", function () { show(b.dataset.v); }); });
+  show("login");
+})();
+</script>
+</body>
+</html>

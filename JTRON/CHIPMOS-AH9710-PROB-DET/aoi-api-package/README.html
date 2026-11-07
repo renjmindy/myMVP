@@ -1,0 +1,308 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AH9710 AOI-API — 開發者 Package</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #d7dce3;
+  --text: #1b2430; --muted: #5b6676; --accent: #0b6e8a; --accent-soft: #e2f1f5;
+  --ok: #1f8a4c; --warn: #b26a00; --err: #c23a3a;
+  --code-bg: #0f1720; --code-text: #d7e2ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+    --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+    --ok: #4cc07c; --warn: #e3a23a; --err: #ec6b6b;
+    --code-bg: #0a0f14; --code-text: #d7e2ee;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+  --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+  --ok: #4cc07c; --warn: #e3a23a; --err: #ec6b6b;
+  --code-bg: #0a0f14; --code-text: #d7e2ee;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 28px; margin: 0 0 6px; }
+h2 { font-size: 21px; margin: 40px 0 10px; }
+h3 { font-size: 16px; margin: 22px 0 8px; }
+p { margin: 8px 0; }
+.lead { color: var(--muted); margin: 0 0 20px; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 18px 0 8px; font-size: 14px; }
+nav.toc a { color: var(--accent); text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+.meta { color: var(--muted); font-size: 13px; }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+pre code { font-size: 12.5px; line-height: 1.55; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+.note.warn { border-color: var(--warn); }
+.pill { display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 6px; font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+.pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+ul, ol { padding-left: 22px; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
+.kv-table th { width: 30%; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>AH9710 AOI-API — 開發者 Package</h1>
+<p class="lead">小型 FastAPI 服務，用來判定探針針尖是否已經與 probe card 接觸（ROI 影像為對焦狀態 = <code>contact</code>，失焦 = <code>non_contact</code>）。本服務對所有 probe card 類型通用——單一 calibration、單一 fixed reference ROI。</p>
+<p class="meta">v7.2 · 服務 port <code>8000</code> · 模型：以 5 個影像特徵為輸入的 logistic regression · 判定門檻 <code>probability_contact ≥ 0.5</code> · 建議相機解析度 <strong>1540 × 1050</strong></p>
+
+<nav class="toc" aria-label="目錄">
+  <a href="#contents">1. Package 內容</a>
+  <a href="#install">2. 安裝與啟動</a>
+  <a href="#flow">3. 整體資料流</a>
+  <a href="#endpoints">4. HTTP endpoints</a>
+  <a href="#batch">5. 批次掃描工具</a>
+  <a href="#monitor">6. 給 monitor 的呼叫方式</a>
+  <a href="#features">7. 特徵說明</a>
+  <a href="#recal">8. 重新校正</a>
+  <a href="#open">9. 待確認事項</a>
+  <a href="#trouble">10. 疑難排解</a>
+</nav>
+
+<hr>
+
+<h2 id="contents">1. 這個 Package 的內容</h2>
+<pre><code>aoi-api-package/
+├── prob_api.py            # FastAPI 服務本體
+├── local_output/
+│   ├── calibration.json   # 訓練好的模型（通用、單一物件，無 per-category 鍵）
+│   ├── contact/           # 判定為 contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
+│   └── non-contact/       # 判定為 non_contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
+├── requirements.txt       # Python 相依套件
+├── scan_batch.py          # CLI 工具——批次掃描資料夾、印出每張的 KPI 與判定
+├── samples/
+│   ├── contact.png            # 完整 1540×1050 RCM 截圖（contact）
+│   └── non_contact.png        # 完整 1540×1050 RCM 截圖（non_contact）
+├── README.md              # markdown 版
+└── README.html            # 本文件（離線可讀，不需後端）</code></pre>
+<div class="note"><strong>重要</strong>：請從 <strong>package 的根目錄</strong>啟動服務，才能讓 <code>./local_output/calibration.json</code> 的相對路徑解析正確——程式啟動時會從當下目錄讀取。</div>
+
+<h2 id="install">2. 安裝與啟動</h2>
+<pre><code># 建立 Python 3.10+ 環境（venv / conda 皆可）
+python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+
+# 啟動服務
+python prob_api.py
+# 或：
+uvicorn prob_api:app --host 0.0.0.0 --port 8000</code></pre>
+<p>當 <code>GET http://localhost:8000/api/v1/health</code> 回傳 <code>{"status":"ok", "calibrated": true, ...}</code> 就表示啟動成功。Swagger UI 位址：<code>http://localhost:8000/docs</code>。</p>
+
+<h2 id="flow">3. 整體資料流</h2>
+<pre><code>RCM 相機 (1540 × 1050)
+   │ snapshot
+   ▼
+contact-monitor-service  ← 您同事的程式
+   │ 不裁切、不 resize，直接上傳 1540×1050 整張
+   ▼
+POST /api/v1/predict  multipart file=&lt;整張 1540×1050&gt;
+   │
+   ▼
+AOI API (prob_api.py)
+   │ 1. 讀入 → 依 reference_roi 裁出 385×420 crop
+   │ 2. 計算 5 個特徵 → logistic → status
+   │ 3. 存 2 個 JPG 到 ./local_output/&lt;status&gt;/：
+   │       &lt;timestamp&gt;.jpg          ← 原圖 1540×1050 + 藍色 ROI 外框 (給人工檢視)
+   │       cropped_&lt;timestamp&gt;.jpg  ← 原始 385×420 crop (給模型除錯)
+   │ 4. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
+   ▼
+monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示</code></pre>
+<p>Monitor 端的工作因此簡化：只負責 <strong>fetch snapshot → 上傳</strong>，裁切與存檔都由 AOI 做。</p>
+
+<h2 id="endpoints">4. HTTP endpoints</h2>
+
+<h3><code>GET /api/v1/health</code> — 可用性檢查</h3>
+<p><code>contact-monitor-service</code> 在 <code>STARTING</code> 狀態會用這個 endpoint 確認 AOI 已經準備好。</p>
+<pre><code>{
+  "status": "ok",
+  "service": "aoi-api",
+  "version": "7.2",
+  "calibrated": true
+}</code></pre>
+
+<h3><code>GET /api/v1/config</code> — 模型 metadata</h3>
+<p>Monitor 啟動時呼叫一次即可；用 <code>reference_roi</code> 確認 RCM framing 與訓練幾何一致。</p>
+<pre><code>{
+  "reference_roi": { "rx1": 0.25, "ry1": 0.45, "rx2": 0.5, "ry2": 0.85 },
+  "model": "logistic",
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  "decision_threshold": 0.5,
+  "trained_on": { "n_contact": 10, "n_non_contact": 14 }
+}</code></pre>
+
+<h3><code>POST /api/v1/predict</code> — 判定一張 RCM 截圖</h3>
+<p><code>multipart/form-data</code>，單一欄位 <code>file</code>。上傳 <strong>完整 RCM 截圖</strong>（建議 1540 × 1050），AOI 會自行裁切。</p>
+<pre><code>curl -s -X POST http://localhost:8000/api/v1/predict \
+  -F 'file=@samples/contact.png' | jq .</code></pre>
+<p>Response：</p>
+<pre><code>{
+  "status": "contact",
+  "roi_image": "/local_output/contact/cropped_20261107_123451_018.jpg",
+  "fullframe_image": "/local_output/contact/20261107_123451_018.jpg",
+  "laplacian_score": 24.74,
+  "probability_contact": 0.9138,
+  "features": {
+    "lap_var": 24.74,
+    "mean": 55.11,
+    "std": 23.31,
+    "edge_den": 0.015,
+    "grad_mag": 41.35
+  }
+}</code></pre>
+
+<div class="table-wrap"><table class="kv-table">
+  <tr><th>欄位</th><th>說明</th></tr>
+  <tr><td><code>status</code></td><td><span class="pill ok">contact</span> 或 <span class="pill warn">non_contact</span>——monitor 需要的二元判定</td></tr>
+  <tr><td><code>roi_image</code></td><td>已儲存的裁切後 ROI 影像 URL path（<code>cropped_&lt;timestamp&gt;.jpg</code>）。Web UI 依設計文件 §7 只在 <code>contact</code> 時顯示</td></tr>
+  <tr><td><code>fullframe_image</code></td><td>已儲存的原圖 URL path（<code>&lt;timestamp&gt;.jpg</code>），上面有藍色 ROI 外框——給人工 offline review 用</td></tr>
+  <tr><td><code>laplacian_score</code></td><td>等同於 <code>features.lap_var</code>——保留以符合設計文件相容欄位</td></tr>
+  <tr><td><code>probability_contact</code></td><td>logistic 模型輸出的 0.0 – 1.0 機率</td></tr>
+  <tr><td><code>features</code></td><td>五個特徵的全部數值（詳見 §7）</td></tr>
+</table></div>
+
+<h3><code>GET /local_output/contact/&lt;file&gt;.jpg</code> 與 <code>/local_output/non-contact/&lt;file&gt;.jpg</code> — 取回已儲存的 JPG</h3>
+<p>以 FastAPI StaticFiles 提供；<code>roi_image</code> 與 <code>fullframe_image</code> 回傳的路徑可直接拼接服務 base URL，例如：<br>
+<code>http://192.168.137.101:8000/local_output/contact/20261107_123451_018.jpg</code></p>
+<div class="note"><code>local_output/calibration.json</code> <strong>不會</strong>被對外提供，因為我們只掛載 <code>contact/</code> 與 <code>non-contact/</code> 兩個子目錄。</div>
+
+<h2 id="batch">5. 批次掃描工具 — <code>scan_batch.py</code></h2>
+<p>掃描資料夾裡的所有影像，逐張呼叫 API，印出每一張的 KPI 與判定、最後顯示 summary。本工具不做任何裁切——API 內部完全處理。</p>
+
+<h3>5a. 基本用法</h3>
+<pre><code>python scan_batch.py samples/</code></pre>
+<p>預期輸出：</p>
+<pre><code>AOI API      : http://localhost:8000
+reference ROI: (0.25, 0.45, 0.5, 0.85)
+mode         : full-frame upload (API crops internally and saves overlaid+cropped files)
+files found  : 2
+
+file                  status          p(c)  lap_var  grad_mag  edge_den    mean     std     ms
+---------------------------------------------------------------------------------------------
+contact.png           contact       0.9138    24.74    41.35     0.0151   55.11   23.31   15.0
+non_contact.png       non_contact   0.0021    12.27     7.43     0.0048   48.39   14.09   12.1
+---------------------------------------------------------------------------------------------
+
+scanned      : 2   contact: 1   non_contact: 1   errors: 0
+avg latency  : 13.5 ms</code></pre>
+
+<h3>5b. 有 label 時量測準確率</h3>
+<p>把資料放到 <code>&lt;root&gt;/contact/</code> 和 <code>&lt;root&gt;/non-contact/</code> 子目錄，然後加 <code>--labeled</code>：</p>
+<pre><code>python scan_batch.py labeled_data/ --labeled</code></pre>
+<p>輸出會多一個 <code>truth</code> 欄位，summary 也會附上 <code>accuracy</code>。</p>
+
+<h3>5c. 輸出成 CSV</h3>
+<pre><code>python scan_batch.py samples/ --csv results.csv</code></pre>
+<p>CSV 會包含兩個已儲存檔案的 URL path（<code>roi_image</code> 與 <code>fullframe_image</code>）。</p>
+
+<h3>5d. 指定不同的 API 位址</h3>
+<pre><code>python scan_batch.py samples/ --url http://192.168.137.101:8000</code></pre>
+
+<h3>所有參數</h3>
+<pre><code>positional:
+  path                 要掃描的影像資料夾
+
+options:
+  --url URL            AOI API base URL（預設 http://localhost:8000）
+  --timeout SECONDS    HTTP timeout（預設 5.0 秒）
+  --csv PATH           將每張結果寫入指定 CSV 檔
+  --labeled            把 &lt;path&gt; 當作含 ./contact/ 和 ./non-contact/ 的 root</code></pre>
+
+<h2 id="monitor">6. <code>contact-monitor-service</code> 應該怎麼呼叫這個 API</h2>
+<p>Monitor 端的工作非常單純：<strong>不要裁切、不要 resize，直接把 RCM 整張 snapshot 以 <code>file</code> 欄位 POST 給 <code>/api/v1/predict</code></strong>。</p>
+
+<h3>相機設定（必須）</h3>
+<ul>
+  <li>RCM 全畫面解析度：<strong>1540 × 1050 px</strong></li>
+  <li>構圖：確保訓練時的 ROI 區域（左 25%–50% 寬 × 上 45%–85% 高）框到探針與 die 的接觸區</li>
+</ul>
+<p>這組設定讓 AOI 內部裁切後得到 <strong>385 × 420</strong> 原生 crop，與訓練資料幾何一致，不需要在 monitor 或 AOI 任一端做 resize。</p>
+
+<h3>範例呼叫（Python）</h3>
+<pre><code>import requests
+
+with open(rcm_snapshot_bytes, "rb") as fh:
+    r = requests.post(
+        "http://192.168.137.101:8000/api/v1/predict",
+        files={"file": ("snap.jpg", fh, "image/jpeg")},
+        timeout=3,
+    )
+resp = r.json()
+# resp["status"]              → "contact" or "non_contact"
+# resp["roi_image"]           → cropped file URL
+# resp["fullframe_image"]     → full-frame + overlay file URL
+# resp["probability_contact"] → 0.0–1.0</code></pre>
+
+<h3>裝好之後的驗收檢查</h3>
+<p>拿任何一張<strong>已知是 contact</strong> 的 RCM 截圖丟進 <code>/api/v1/predict</code>，看 response 的 <code>features</code>：</p>
+<div class="table-wrap"><table>
+  <tr><th>Feature</th><th>contact 預期區間</th><th>non-contact 預期區間</th></tr>
+  <tr><td><code>lap_var</code></td><td>21 – 29</td><td>12 – 19</td></tr>
+  <tr><td><code>grad_mag</code></td><td>40 – 57</td><td>7 – 38</td></tr>
+  <tr><td><code>edge_den</code></td><td>0.01 – 0.08</td><td>0.00 – 0.01</td></tr>
+  <tr><td><code>mean</code></td><td>51 – 62</td><td>45 – 57</td></tr>
+  <tr><td><code>std</code></td><td>24 – 36</td><td>14 – 32</td></tr>
+</table></div>
+<p>若實際數值嚴重偏離這些區間（例如 <code>lap_var = 3</code> 或 <code>lap_var = 80</code>），代表相機解析度或 framing 不對，不是 AOI 的 bug——請確認相機設為 1540 × 1050 且構圖正確。</p>
+
+<h3>儲存量估算</h3>
+<p>Monitor 每 <code>aoi.interval_ms</code> 呼叫一次（預設 200 ms = 5 Hz），每次 AOI 寫兩個 JPG（原圖 ~450 KB、裁切 ~20 KB）。粗估：</p>
+<ul>
+  <li>每小時：18,000 次呼叫 × 2 檔 ≈ <strong>36,000 檔、約 1 GB</strong></li>
+  <li>設計文件 §9 的 log-cleaner 必須同時清理 <code>./local_output/contact/</code> 與 <code>./local_output/non-contact/</code>，建議保留 24 小時。</li>
+</ul>
+
+<h2 id="features">7. 特徵說明</h2>
+<p>五個特徵都計算於 ROI 的灰階影像、且經過 5×5 Gaussian blur。挑選標準：<strong>至少兩個特徵能單獨區分 contact / non-contact</strong>，當 probe card 類型改變時仍然 robust。</p>
+<div class="table-wrap"><table>
+  <tr><th>Feature</th><th>衡量目標</th><th style="text-align:right">模型權重</th></tr>
+  <tr><td><code>lap_var</code></td><td>Laplacian 變異數——銳利度 / 高頻訊號</td><td style="text-align:right"><strong>+2.23</strong>（主訊號）</td></tr>
+  <tr><td><code>grad_mag</code></td><td>Sobel gradient magnitude 平均——整體邊緣強度</td><td style="text-align:right"><strong>+1.28</strong>（主訊號）</td></tr>
+  <tr><td><code>edge_den</code></td><td>Canny edge pixel 比例</td><td style="text-align:right"><strong>+1.17</strong>（主訊號）</td></tr>
+  <tr><td><code>mean</code></td><td>灰階平均強度</td><td style="text-align:right">+0.44</td></tr>
+  <tr><td><code>std</code></td><td>灰階強度 std-dev</td><td style="text-align:right">−0.45（被 L2 regularize 到接近 0）</td></tr>
+  <tr><td><em>intercept</em></td><td></td><td style="text-align:right">−0.90</td></tr>
+</table></div>
+<p>預測公式：<code>sigmoid( weight · ((feature − mean) / std) + intercept )</code>，在 0.5 處做判定。</p>
+
+<h2 id="recal">8. 相機 / FOV 變更時的重新校正</h2>
+<p>若鏡頭、FOV、或 zoom 有明顯變動，特徵分布會偏移，需要重新校正。收集大約 10 張 contact 與 10 張 non-contact 的 labeled 影像，再執行校正 script（請找 API owner——這是一個小的訓練 script，會重寫 <code>calibration.json</code>）。</p>
+<p>API 的程式與 endpoint 在校正前後<strong>不會改變</strong>。</p>
+
+<h2 id="open">9. 待確認事項（截至此版）</h2>
+<ol>
+  <li><strong><code>roi_image</code> 格式確定。</strong> 回傳的是本 API 內建 StaticFiles 提供的 <strong>URL path</strong>（<code>GET /local_output/contact/&lt;file&gt;.jpg</code> 或 <code>/local_output/non-contact/&lt;file&gt;.jpg</code>），monitor 自行加上 base URL 就能給前端 Web UI 顯示。</li>
+  <li><strong><code>category</code> 欄位取消。</strong> 設計文件 <code>monitor.json</code> 裡的 <code>aoi.category</code> 不再需要——本 API 通用於所有 probe card。Monitor 可將該欄位留空，或（更保險）直接從上傳 payload 中移除。</li>
+  <li><strong>Log rotation。</strong> 本 API 每次判定都會在對應子資料夾產生 2 個 JPG。請將 <code>./local_output/contact/</code> 與 <code>./local_output/non-contact/</code> 同時加入設計文件 §9 log-cleaner 的清理範圍，建議保留 24 小時。</li>
+</ol>
+
+<h2 id="trouble">10. 疑難排解</h2>
+<div class="table-wrap"><table>
+  <tr><th>現象</th><th>可能原因</th><th>修正方式</th></tr>
+  <tr><td><code>GET /api/v1/health</code> 回傳 <code>"calibrated": false</code></td><td><code>calibration.json</code> 缺失或格式有誤</td><td>從本 package 還原該檔案</td></tr>
+  <tr><td>已知是 contact 的影像都被判成 <code>non_contact</code> 且 <code>p ≈ 0.0</code></td><td>相機解析度或 framing 不對</td><td>用 §6 的表格檢查 <code>features</code> 值，確認相機設為 1540 × 1050</td></tr>
+  <tr><td>POST 回 <code>422 Unprocessable Entity</code></td><td>multipart 欄位名錯誤</td><td>欄位名必須完全是 <code>file</code></td></tr>
+  <tr><td>POST 回 <code>500</code> 且訊息含 <code>計算出的 ROI 範圍無效</code></td><td>上傳的圖太小，reference_roi 裁出來的 crop 是 0×0</td><td>確認上傳的是完整 RCM 截圖，不是已經裁好的 ROI</td></tr>
+  <tr><td>POST 回 <code>500</code> 且訊息含 <code>calibration.json missing</code></td><td>calibration.json 損壞或缺少 feature 資訊</td><td>從 package 還原，重新啟動服務</td></tr>
+  <tr><td>Latency &gt; 200 ms</td><td>AOI 本身約 25 ms，問題不在 AOI</td><td>檢查網路以及 RCM 取圖時間</td></tr>
+</table></div>
+
+</main>
+</body>
+</html>

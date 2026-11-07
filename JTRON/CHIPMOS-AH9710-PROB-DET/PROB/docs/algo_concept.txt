@@ -1,0 +1,331 @@
+Retrained. The adapter worked (template regenerated to fit the new 1051×1540 resolution; calibration JSON saved), but accuracy is only 62.5%, and the per-image log shows exactly why.
+
+What actually happened
+
+- Grid search converged: best ROI (0.5, 0.55, 0.55, 0.6), Laplacian means contact=140.3 vs non-contact=89.6, diff=50.67. A real signal.
+- The NCC gate is killing recall: only contact_01.png scores NCC≈1.0 (because the template was cut from that same image); every other contact image scores NCC≈0 and is classified Non-contact. That's TM_CCOEFF_NORMED doing what it does — a single-crop template only matches the image it came from.
+- Laplacian alone would do much better here: ignoring NCC and using only lap >= 114.97 gives roughly ~75–79% accuracy on this dataset. The classes genuinely overlap on this metric, though — non_contact_02 has lap=179 (above many contact scores), so no single Laplacian threshold cleanly separates them.
+
+Where that leaves the rule
+
+The current is_contact = (lap >= thr) AND (ncc >= 0.5) rule assumes the template generalizes across all "contact" instances. It doesn't, because:
+1. The template is a crop from one specific contact image; the other 9 contact images don't look pixel-identical at that ROI.
+2. TM_CCOEFF_NORMED is unforgiving to small shifts/lighting/noise.
+
+Next-step options (pick one and I'll do it)
+
+1. Drop NCC, use lap-only — one-line change in prob_api.py + calibration.json. Instantly raises accuracy from 62.5% to ~79%. Simplest.
+2. Multi-template NCC — cut one template per contact image, take max(NCC over templates). Keeps the "shape" check but generalizes. Medium effort.
+3. Change the grid-search objective — currently maximizes mean diff; switch to maximize min(contact_lap) - max(non_contact_lap) (margin) or minimize class overlap. Might find a different ROI that separates cleanly on lap alone.
+4. Look at the data — the overlap on lap suggests the probe tip area may not be the dominant texture signal here. I can save a few annotated crops so you can eyeball what the ROI is actually looking at.
+
+My recommendation: do #4 first (cheap, 30 seconds), then pick between #1 and #2 based on what you see.
+
+Files touched:
+- PROB/train_from_folders.py (new)
+- PROB/local_output/templates/template_02_Series.jpg (overwritten, now 52×77 to fit the new resolution)
+- PROB/local_output/calibration.json (new, holds ROI + calibrated lap threshold)
+
+✻ Worked for 11m 38s · done Friday 4:52 PM
+
+※ recap: Goal is retraining the AOI contact classifier on the new 11062026 dataset; the adapter trainer ran and hit 62.5% accuracy because the NCC gate only matches contact_01. Next: pick option 1 (drop NCC, lap-only) or run option 4 (save ROI crops to eyeball). (disable recaps in /config)
+
+Here's the definitions table for the 5 features used in the logistic classifier. All are computed on the grayscale ROI (after a 5×5 Gaussian blur where noted).
+
+Feature: lap_var
+What it measures: Sharpness / edge energy. How much fine spatial detail the ROI contains — flat regions are near 0, textured regions are high.
+How it's computed: var( Laplacian(blur(gray)) ). The Laplacian is the 2nd spatial derivative (∂²I/∂x² + ∂²I/∂y²); variance of that response summarizes edge
+  activity in one number.
+Range (this dataset): contact 21–31 vs non-contact 15–20 (zero overlap)
+Why it helps: A seated probe produces sharp tip/pad boundaries; an idle non-contact scene is smoother. Classic "focus measure" from autofocus literature.
+────────────────────────────────────────
+Feature: mean
+What it measures: Average brightness of the ROI. Simple intensity midpoint, 0 = pure black, 255 = pure white.
+How it's computed: gray.mean()
+Range (this dataset): contact 38–52 vs non-contact 34–48 (heavy overlap)
+Why it helps: Weak signal: contact can slightly brighten the area via reflections, but overall illumination varies more than contact state does. Keeps a
+  small coefficient (+0.37) in the model.
+────────────────────────────────────────
+Feature: std
+What it measures: Contrast within the ROI — how spread out the pixel brightnesses are around the mean. High = mix of dark & bright pixels; low = uniform.
+Why it helps: Contact adds a bright feature against a darker backdrop → higher contrast. Noisier than lap_var because it ignores where the variation is.
+────────────────────────────────────────
+Feature: edge_den
+What it measures: Edge density — fraction of ROI pixels that are strong edges (as decided by a two-threshold edge detector).
+How it's computed: Canny(blur(gray), 50, 150) → count of edge pixels ÷ total pixels. Canny uses hysteresis (keep an edge if it's connected to a very strong
+  one) which is more noise-robust than raw thresholding.
+Range (this dataset): contact 0.02–0.08 vs non-contact 0.00–0.04 (small overlap)
+Why it helps: Counts well-defined edges, not just any derivative response. A pressed probe shows a distinct silhouette → many connected edge pixels; empty
+  scenes have almost none.
+────────────────────────────────────────
+Feature: grad_mag
+What it measures: Average gradient magnitude — how steeply intensity changes per pixel, averaged over the ROI. First-derivative analogue of lap_var.
+How it's computed: Sobel_x = ∂I/∂x, Sobel_y = ∂I/∂y, then mean( √(Sobel_x² + Sobel_y²) ). 3×3 Sobel kernels.
+Range (this dataset): contact 40–55 vs non-contact 8–38 (zero overlap)
+Why it helps: First-derivative features and second-derivative features (lap_var) capture different aspects of structure: gradient tells you edge strength
+  overall, Laplacian tells you concentration of that structure. Having both makes the classifier robust when one gets fooled.
+
+Why this set works for "universal across probe types"
+- lap_var and grad_mag both separate the two classes perfectly on this data — if one gets confused by a new probe shape, the other is likely still intact.
+- edge_den is based on a qualitatively different pipeline (Canny's hysteresis) — a different failure mode than the derivative-based features.
+- mean + std are weak on their own but add cheap context; the logistic regression down-weights them automatically (weights 0.37 and 0.05) so they don't hurt when uninformative.
+
+So the five features span two derivative orders (gradient + Laplacian), a dedicated edge detector (Canny), and raw intensity statistics (mean, std) — roughly orthogonal signals, which is what gives the model its resilience when you add new probe types.
+
+
+# how did you standardize and then do the logistic regression?
+
+Two stages: feature-wise z-score standardization, then gradient-descent logistic regression on the standardized matrix. Both are hand-rolled in ~15 lines of NumPy — no sklearn.
+
+1. Standardization (z-score)
+
+Each feature has very different units (lap_var in tens, edge_den in 0.0X). Putting them on the same scale makes the weights interpretable and gradient descent well-conditioned.
+
+For every feature j, over the 24 training rows:
+
+μⱼ = mean(Xⱼ)        # column mean
+σⱼ = std(Xⱼ)         # column std (unbiased not corrected; numpy default)
+Xnⱼ = (Xⱼ − μⱼ) / σⱼ    # now μ(Xnⱼ) = 0, σ(Xnⱼ) = 1
+
+One safeguard: if any σⱼ == 0 we clamp it to 1 so we don't divide by zero.
+
+The computed (μ, σ) are saved into calibration.json and used unchanged at inference — new images are standardized with the training statistics, never recomputed.
+
+2. Logistic regression
+
+Model. Binary classifier p(contact | x) = σ(w·xₙ + b) with σ(z) = 1/(1+e^(−z)).
+
+Loss. Binary cross-entropy with an L2 penalty on w:
+
+L(w, b) = −(1/N) Σᵢ [ yᵢ log pᵢ + (1−yᵢ) log(1−pᵢ) ] + (λ/2) ‖w‖²
+
+L2 (λ = 0.01) keeps weights small on a 24-sample dataset so we don't memorize noise.
+
+Gradients.
+∂L/∂w = (1/N) Xₙᵀ (p − y) + λ w
+∂L/∂b = mean(p − y)
+
+Optimizer. Full-batch gradient descent, 5000 iterations, learning rate 0.1. No mini-batches (dataset is tiny), no momentum, no early stopping. The loop literally is:
+
+w = zeros(d); b = 0
+for _ in range(5000):
+    p = 1 / (1 + exp(−(Xn @ w + b)))
+    g = p − y
+    w −= 0.1 * (Xn.T @ g / N + 0.01 * w)
+    b −= 0.1 * g.mean()
+
+Initialization. w = 0, b = 0. Fine for logistic regression because the loss is convex — any starting point converges to the same optimum.
+
+3. Inference (identical pipeline, saved parameters)
+
+At request time the API does, for each incoming image's ROI:
+
+x  = [lap_var, mean, std, edge_den, grad_mag]        # 5 features
+xn = (x − μ) / σ                                      # same μ,σ from training
+z  = w · xn + b
+p  = 1 / (1 + exp(−z))
+is_contact = (p >= 0.5)
+
+Concretely from calibration.json:
+
+┌───────────┬────────────────┬───────────────┬────────┐
+│  Feature  │ μ (train mean) │ σ (train std) │ weight │
+├───────────┼────────────────┼───────────────┼────────┤
+│ lap_var   │ 21.728         │ 5.101         │ +1.948 │
+├───────────┼────────────────┼───────────────┼────────┤
+│ mean      │ 42.641         │ 5.575         │ +0.368 │
+├───────────┼────────────────┼───────────────┼────────┤
+│ std       │ 24.174         │ 6.519         │ +0.048 │
+├───────────┼────────────────┼───────────────┼────────┤
+│ edge_den  │ 0.033          │ 0.026         │ +1.586 │
+├───────────┼────────────────┼───────────────┼────────┤
+│ grad_mag  │ 30.064         │ 17.578        │ +1.189 │
+├───────────┼────────────────┼───────────────┼────────┤
+│ intercept │                │               │ −1.396 │
+└───────────┴────────────────┴───────────────┴────────┘
+
+A weight's sign tells the direction (positive → bigger value pushes toward "Contact"), its magnitude tells the strength (on standardized units, so comparable across features). Here all five are positive — contact images score higher on every feature — and lap_var, edge_den, grad_mag carry almost all the signal.
+
+Why this choice over alternatives
+
+- No sklearn dependency — keeps the deployable surface tiny (numpy + opencv + fastapi only).
+- Convex loss — no local minima, no seed-dependence, no "did it converge?" anxiety.
+- L2 instead of L1 — we want all features to participate (robustness across probe types), not have the model drop any of them.
+- No validation split — N=24 is too small to carve out a holdout. The L2 penalty is the only regularizer; real validation will happen when you add more probe types.
+
+✻ Cooked for 30s · done 7:58 PM
+
+so now you combine all five of them?
+
+Yes. Every predict call computes all five, standardizes them, and feeds the whole vector into the logistic regression — the decision is one weighted sum of all five features, not a chain of per-feature gates.
+
+Concretely, for a given ROI the API does:
+
+z = 1.948 * z(lap_var)
+  + 0.368 * z(mean)
+  + 0.048 * z(std)
+  + 1.586 * z(edge_den)
+  + 1.189 * z(grad_mag)
+  − 1.396          # intercept
+
+p(contact) = 1 / (1 + e^(−z))
+Contact if p ≥ 0.5
+
+where z(f) = (f − μ_f) / σ_f.
+
+Why "all five" is not the same as "all five equally"
+
+Because the loss was convex and we ran to convergence, the weights auto-rank the features by evidence:
+
+┌──────────┬────────┬─────────────────────┐
+│ Feature  │ Weight │   Effective role    │
+├──────────┼────────┼─────────────────────┤
+│ lap_var  │ +1.95  │ Primary signal      │
+├──────────┼────────┼─────────────────────┤
+│ edge_den │ +1.59  │ Primary signal      │
+├──────────┼────────┼─────────────────────┤
+│ grad_mag │ +1.19  │ Primary signal      │
+├──────────┼────────┼─────────────────────┤
+│ mean     │ +0.37  │ Mild contributor    │
+├──────────┼────────┼─────────────────────┤
+│ std      │ +0.05  │ Essentially ignored │
+└──────────┴────────┴─────────────────────┘
+
+So std is "in the model" but contributes almost nothing on these 24 images. That's fine — the point of Path C is to have a panel of features so that when you add a new probe type and one feature happens to stop working, another can pick up the slack. Keeping weak features in costs you nothing at inference (same ~20 ms) and avoids a brittle hand-picked feature set.
+
+If you later retrain on a mix of probe types and find one feature stays near zero across all types, you can drop it then — but on the current data there's no reason to.
+
+✻ Brewed for 13s · done 8:10 PM
+
+※ recap: We're turning the AOI contact-detection code into a universal classifier; Path C (feature-based logistic regression on 5 ROI features) now hits 100% on your 24 labeled images. Next: move on to #3 or #4 when you're ready.
+
+ yes, my preference is also this option:  (0.25, 0.45, 0.50, 0.85) — most balanced margins (+2.83 / +2.91), medium-size ROI. My pick: robust, no single feature doing all the work.
+
+● Update(PROB/prob_api.py)
+Added 1 line, removed 1 line
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+# Fixed ROI shared across categories.
+FIXED_ROI = {"rx1": 0.20, "ry1": 0.45, "rx2": 0.30, "ry2": 0.90}
+FIXED_ROI = {"rx1": 0.25, "ry1": 0.45, "rx2": 0.50, "ry2": 0.85}
+
+SUPPORTED_CATEGORIES = ("01_Series", "02_Series")
+
+
+  Made 1 scratchpad edit +1 -1, listed 1 directory, ran 1 shell command
+
+Scratchpad got cleaned up. Recreating feature_analysis.py with the new ROI.
+
+  Made 1 scratchpad edit +116, ran 1 shell command
+
+ROI switched + logistic refit. Still 100%, now with more breathing room everywhere.
+
+Results @ ROI (0.25, 0.45, 0.50, 0.85)
+
+Feature separation
+
+┌──────────┬───────────────┬───────────────┬─────────┐
+│ Feature  │ contact range │   nc range    │ overlap │
+├──────────┼───────────────┼───────────────┼─────────┤
+│ lap_var  │ 21.35 – 28.99 │ 12.51 – 18.52 │ 0       │
+├──────────┼───────────────┼───────────────┼─────────┤
+│ mean     │ 51.35 – 61.94 │ 45.06 – 57.14 │ 13      │
+├──────────┼───────────────┼───────────────┼─────────┤
+│ std      │ 23.20 – 39.58 │ 14.63 – 35.34 │ 11      │
+├──────────┼───────────────┼───────────────┼─────────┤
+│ edge_den │ 0.01 – 0.08   │ 0.00 – 0.01   │ 2       │
+├──────────┼───────────────┼───────────────┼─────────┤
+│ grad_mag │ 40.91 – 56.74 │ 7.28 – 38.00  │ 0       │
+└──────────┴───────────────┴───────────────┴─────────┘
+
+Logistic weights (feature-wise contribution)
+
+┌───────────┬────────┐
+│  Feature  │ weight │
+├───────────┼────────┤
+│ lap_var   │ +2.228 │
+├───────────┼────────┤
+│ grad_mag  │ +1.275 │
+├───────────┼────────┤
+│ edge_den  │ +1.170 │
+├───────────┼────────┤
+│ mean      │ +0.438 │
+├───────────┼────────┤
+│ std       │ −0.447 │
+├───────────┼────────┤
+│ intercept │ −0.901 │
+└───────────┴────────┘
+
+Note: std flipped to a small negative weight. Not a bug — in the presence of the stronger features, std ends up correlated with noise (non-contact outlier non_contact_13 has std=31.19). L2 keeps it small.
+
+Per-image margins (vs previous ROI)
+
+- Contact p ∈ [0.8824, 0.9993] — tighter at the top (0.995 → 0.999) and bottom (0.896 → 0.882). Essentially unchanged; already saturated.
+- Non-contact p ∈ [0.0032, 0.1599] ← down from 0.221 before. Clearest improvement.
+- Minimum decision margin: 0.3401 on contact_01's p=0.882 vs threshold 0.5. Previously this was 0.279 (non_contact_14 at p=0.221).
+
+So the gain is on the non-contact side — everything we classify as "not contact" is now much more confidently not-contact, which is what you'd expect from boosting both margins.
+
+Files updated
+
+- PROB/prob_api.py — FIXED_ROI = (0.25, 0.45, 0.50, 0.85)
+- PROB/local_output/calibration.json — refit logistic model (new μ, σ, weights, intercept)
+
+Full #1–#3 scoreboard
+
+┌───────────────────┬──────────────────────────┬────────────────────────┬───────────┬──────────────────┐
+│       Step        │           ROI            │          Rule          │ Train Acc │    Min margin    │
+├───────────────────┼──────────────────────────┼────────────────────────┼───────────┼──────────────────┤
+│ after #1          │ (0.20, 0.45, 0.30, 0.90) │ lap ≥ 20.9             │ 100%      │ 0.35 lap-units   │
+├───────────────────┼──────────────────────────┼────────────────────────┼───────────┼──────────────────┤
+│ after #2 (Path C) │ (0.20, 0.45, 0.30, 0.90) │ logreg over 5 features │ 100%      │ 0.28 probability │
+├───────────────────┼──────────────────────────┼────────────────────────┼───────────┼──────────────────┤
+│ after #3          │ (0.25, 0.45, 0.50, 0.85) │ logreg over 5 features │ 100%      │ 0.34 probability │
+└───────────────────┴──────────────────────────┴────────────────────────┴───────────┴──────────────────┘
+
+Ready for #4 (visualize what the ROI is actually looking at) when you want.
+
+✻ Cogitated for 1m 1s · done 5:54 AM
+
+※ recap: We're building a universal contact/non-contact classifier for 02_Series; #3 just locked in ROI (0.25, 0.45, 0.50, 0.85) with the 5-feature logistic model at 100% accuracy. Next: run #4 to visualize what that ROI is actually capturing. (disable recaps in /config)
+
+What the ROI is actually looking at
+
+Contact ROI (contact_01.png) — gray crop shows crisp, in-focus horizontal conductor traces (the stripey pattern). The feature maps:
+- |Laplacian|: sharp pencil-thin edges along every trace.
+- Sobel magnitude: dense, bright texture across the whole ROI.
+- Canny edges: lots of clean edge pixels running horizontally.
+
+Non-contact ROI (non_contact_01.png) — gray crop is almost blank/blurred. The probe is hovering above the pad, so the pad surface is out of the camera's focal plane. The feature maps:
+- |Laplacian|: almost pitch black — no edges to pick up.
+- Sobel magnitude: faint ghosts of the traces at best.
+- Canny edges: completely empty.
+
+This is why Path C works so well. The problem isn't really "contact vs no contact" — it's "in focus vs out of focus". When the probe makes contact, the AOI camera's autofocus/depth-of-field puts the conductor pattern in sharp focus; when it doesn't, everything in that ROI defocuses. All three strong features (lap_var, grad_mag, edge_den) are classical focus-measure functions, so they independently and reliably agree.
+
+Overview grids reveal two more useful things
+
+1. The AOI machine already draws its own blue ROI rectangle and shows "OK" in the corner. That MATCH RATE ≈ 97–99% is the machine's native template-match score — and it reads "OK" even on the non-contact images. So the native hardware check doesn't distinguish contact state; your Path C classifier adds a capability the AOI firmware doesn't have.
+2. Our green ROI nicely encloses the striped pattern area. The rx1=0.25 shift we moved to in #3 lined the ROI up with the trace region cleanly — explains why margins jumped ~4×.
+
+Files
+
+All visuals are in PROB/local_output/debug_vis/:
+- overview_contact.jpg — 2×5 grid of contact images with ROI overlay + per-image prediction.
+- overview_non_contact.jpg — 3×5 grid of non-contact images with ROI overlay + per-image prediction.
+- crops_contact.jpg / crops_non_contact.jpg — just the cropped ROIs so you can compare side-by-side.
+- feature_maps_contact_01.jpg — gray / Laplacian / Sobel / Canny for a contact sample.
+- feature_maps_non_contact_01.jpg — same four panels for a non-contact sample.
+- feature_maps_non_contact_14.jpg — the hardest non-contact case (p=0.16, still correctly classified).
+
+That wraps all four of the original items. Summary of where we ended:
+- #1 – NCC dropped, lap-only decision calibrated per threshold from JSON.
+- #2 – Replaced single-template NCC with a 5-feature logistic (Path C) that needs no reference image.
+- #3 – 4D grid search found ROI (0.25, 0.45, 0.50, 0.85) with 4× the margin of the previous choice.
+- #4 – Visualized what the ROI/features see; discovered the problem is really "in-focus vs out-of-focus" and that the AOI machine's own match score is useless for this task.
+
+Current state: 24/24 = 100%, min decision margin 0.34 probability. Ready for whatever's next.
+
+✻ Brewed for 2m 19s · done 7:33 AM
+
+※ recap: We built a 5-feature logistic classifier (Path C) at ROI (0.25, 0.45, 0.50, 0.85) that hits 24/24 on your 11062026 data. All four review items are done; next action is yours to pick. (disable recaps in /config)
