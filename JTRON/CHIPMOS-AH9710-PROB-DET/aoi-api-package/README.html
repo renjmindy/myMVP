@@ -61,30 +61,36 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
 
 <h1>AH9710 AOI-API — 開發者 Package</h1>
 <p class="lead">小型 FastAPI 服務，用來判定探針針尖是否已經與 probe card 接觸（ROI 影像為對焦狀態 = <code>contact</code>，失焦 = <code>non_contact</code>）。本服務對所有 probe card 類型通用——單一 calibration、單一 fixed reference ROI。</p>
-<p class="meta">v7.2 · 服務 port <code>8000</code> · 模型：以 5 個影像特徵為輸入的 logistic regression · 判定門檻 <code>probability_contact ≥ 0.5</code> · 建議相機解析度 <strong>1540 × 1050</strong></p>
+<p class="meta">v7.3 · 服務 port <code>8000</code>（可透過 <code>config/aoi_api.json</code> 調整） · 模型：以 5 個影像特徵為輸入的 logistic regression · 判定門檻 <code>probability_contact ≥ 0.5</code> · 建議相機解析度 <strong>1540 × 1050</strong></p>
 
 <nav class="toc" aria-label="目錄">
   <a href="#contents">1. Package 內容</a>
   <a href="#install">2. 安裝與啟動</a>
   <a href="#flow">3. 整體資料流</a>
-  <a href="#endpoints">4. HTTP endpoints</a>
-  <a href="#batch">5. 批次掃描工具</a>
-  <a href="#monitor">6. 給 monitor 的呼叫方式</a>
-  <a href="#features">7. 特徵說明</a>
-  <a href="#recal">8. 重新校正</a>
-  <a href="#open">9. 待確認事項</a>
-  <a href="#trouble">10. 疑難排解</a>
+  <a href="#config-file">4. 設定檔</a>
+  <a href="#log">5. Log 紀錄</a>
+  <a href="#endpoints">6. HTTP endpoints</a>
+  <a href="#batch">7. 批次掃描工具</a>
+  <a href="#monitor">8. 給 monitor 的呼叫方式</a>
+  <a href="#features">9. 特徵說明</a>
+  <a href="#recal">10. 重新校正</a>
+  <a href="#open">11. 待確認事項</a>
+  <a href="#trouble">12. 疑難排解</a>
 </nav>
 
 <hr>
 
 <h2 id="contents">1. 這個 Package 的內容</h2>
 <pre><code>aoi-api-package/
-├── prob_api.py            # FastAPI 服務本體
+├── prob_api.py            # FastAPI 服務本體 (v7.3)
+├── config/
+│   └── aoi_api.json       # 所有可調整的路徑與 server/log 設定（見 §4）
 ├── local_output/
 │   ├── calibration.json   # 訓練好的模型（通用、單一物件，無 per-category 鍵）
 │   ├── contact/           # 判定為 contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
 │   └── non-contact/       # 判定為 non_contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
+├── logs/
+│   └── aoi_api.log        # 每次 predict 的 JSON Lines 紀錄（見 §5；每日午夜輪替）
 ├── requirements.txt       # Python 相依套件
 ├── scan_batch.py          # CLI 工具——批次掃描資料夾、印出每張的 KPI 與判定
 ├── samples/
@@ -92,16 +98,18 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
 │   └── non_contact.png        # 完整 1540×1050 RCM 截圖（non_contact）
 ├── README.md              # markdown 版
 └── README.html            # 本文件（離線可讀，不需後端）</code></pre>
-<div class="note"><strong>重要</strong>：請從 <strong>package 的根目錄</strong>啟動服務，才能讓 <code>./local_output/calibration.json</code> 的相對路徑解析正確——程式啟動時會從當下目錄讀取。</div>
+<div class="note"><strong>重要</strong>：請從 <strong>package 的根目錄</strong>啟動服務，才能讓 <code>./config/aoi_api.json</code>、<code>./local_output/calibration.json</code>、<code>./logs/</code> 等相對路徑解析正確——程式啟動時會從當下目錄讀取。</div>
 
 <h2 id="install">2. 安裝與啟動</h2>
 <pre><code># 建立 Python 3.10+ 環境（venv / conda 皆可）
 python3 -m venv .venv &amp;&amp; source .venv/bin/activate
 pip install -r requirements.txt
 
-# 啟動服務
+# 啟動服務（會讀取 config/aoi_api.json）
 python prob_api.py
-# 或：
+# 或指定自訂設定檔：
+AOI_API_CONFIG=/etc/aoi/aoi_api.json python prob_api.py
+# 或直接用 uvicorn（仍會載入預設設定）：
 uvicorn prob_api:app --host 0.0.0.0 --port 8000</code></pre>
 <p>當 <code>GET http://localhost:8000/api/v1/health</code> 回傳 <code>{"status":"ok", "calibrated": true, ...}</code> 就表示啟動成功。Swagger UI 位址：<code>http://localhost:8000/docs</code>。</p>
 
@@ -121,19 +129,94 @@ AOI API (prob_api.py)
    │ 3. 存 2 個 JPG 到 ./local_output/&lt;status&gt;/：
    │       &lt;timestamp&gt;.jpg          ← 原圖 1540×1050 + 藍色 ROI 外框 (給人工檢視)
    │       cropped_&lt;timestamp&gt;.jpg  ← 原始 385×420 crop (給模型除錯)
-   │ 4. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
+   │ 4. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
+   │ 5. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
    ▼
 monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示</code></pre>
-<p>Monitor 端的工作因此簡化：只負責 <strong>fetch snapshot → 上傳</strong>，裁切與存檔都由 AOI 做。</p>
+<p>Monitor 端的工作因此簡化：只負責 <strong>fetch snapshot → 上傳</strong>，裁切、存檔、日誌都由 AOI 做。</p>
 
-<h2 id="endpoints">4. HTTP endpoints</h2>
+<h2 id="config-file">4. 設定檔 <code>config/aoi_api.json</code></h2>
+<p>所有可調整的路徑與 server/logging 設定都寫在這裡；程式啟動時讀取，不存在時使用內建預設值。檔案回收 service 可讀取同一份設定來得知要掃哪些資料夾（見 §8「儲存量估算」）。</p>
+<p><strong>預設內容</strong>：</p>
+<pre><code>{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "paths": {
+    "calibration_json": "./local_output/calibration.json",
+    "contact_dir": "./local_output/contact",
+    "non_contact_dir": "./local_output/non-contact",
+    "log_dir": "./logs"
+  },
+  "logging": {
+    "level": "INFO",
+    "filename": "aoi_api.log",
+    "rotation": "daily",
+    "backup_count": 7
+  }
+}</code></pre>
+<p><strong>各欄位</strong>：</p>
+<div class="table-wrap"><table>
+  <tr><th>欄位</th><th>說明</th></tr>
+  <tr><td><code>server.host</code>, <code>server.port</code></td><td>uvicorn 綁定位址與 port</td></tr>
+  <tr><td><code>paths.calibration_json</code></td><td>模型 calibration 檔路徑（相對或絕對皆可）</td></tr>
+  <tr><td><code>paths.contact_dir</code></td><td>predict 判定為 <code>contact</code> 時 JPG 寫入的資料夾</td></tr>
+  <tr><td><code>paths.non_contact_dir</code></td><td>predict 判定為 <code>non_contact</code> 時 JPG 寫入的資料夾</td></tr>
+  <tr><td><code>paths.log_dir</code></td><td>JSON Lines log 檔寫入的資料夾</td></tr>
+  <tr><td><code>logging.level</code></td><td>Python logging level（<code>DEBUG</code> / <code>INFO</code> / <code>WARNING</code> / <code>ERROR</code>）</td></tr>
+  <tr><td><code>logging.filename</code></td><td>當日 log 檔名（固定；輪替後會變成 <code>aoi_api.log.YYYY-MM-DD</code>）</td></tr>
+  <tr><td><code>logging.rotation</code></td><td>目前僅支援 <code>daily</code>（午夜輪替）；留此欄位以便未來擴充</td></tr>
+  <tr><td><code>logging.backup_count</code></td><td>保留幾份輪替過的舊檔（超過的最舊檔會被 handler 自動刪除）</td></tr>
+</table></div>
+<p><strong>換到不同的路徑或 port</strong>：直接改 <code>config/aoi_api.json</code>，然後重啟服務。StaticFiles 對外的 URL path 固定為 <code>/local_output/contact/...</code> 與 <code>/local_output/non-contact/...</code>，不受 <code>paths.contact_dir</code> / <code>paths.non_contact_dir</code> 影響，所以 monitor 端的呼叫合約穩定。</p>
+<p><strong>換到完全不同位置的設定檔</strong>：在啟動前設定環境變數 <code>AOI_API_CONFIG</code> 指向目標檔案即可，例如 <code>AOI_API_CONFIG=/etc/aoi/aoi_api.json python prob_api.py</code>。</p>
+
+<h2 id="log">5. Log 紀錄（JSON Lines）</h2>
+<p>每次 <code>POST /api/v1/predict</code> 完成後，AOI 會把完整 response + 來源檔名 + 處理耗時寫入 <code>&lt;log_dir&gt;/aoi_api.log</code>，格式為 <strong>JSON Lines</strong>（每一行是一個獨立 JSON 物件，方便 <code>jq</code>、<code>pandas</code>、<code>grep</code> 處理）。另會紀錄 <code>startup</code>、<code>shutdown</code>、<code>predict_error</code> 事件。</p>
+<p><strong>檔名輪替</strong>：使用 Python <code>TimedRotatingFileHandler</code>，每日 00:00 午夜產生新檔，舊檔改名成 <code>aoi_api.log.YYYY-MM-DD</code>。保留天數由 <code>logging.backup_count</code> 控制（預設 7）；超過的最舊檔自動刪除。</p>
+<p><strong>Predict 事件格式範例</strong>（單行，為了易讀以下有換行）：</p>
+<pre><code>{
+  "ts": "2026-11-10T11:41:52.156",
+  "level": "INFO",
+  "event": "predict",
+  "filename": "Screenshot 2026-11-06 121216.png",
+  "status": "contact",
+  "roi_image": "/local_output/contact/cropped_20261110_114152_156.jpg",
+  "fullframe_image": "/local_output/contact/20261110_114152_156.jpg",
+  "laplacian_score": 24.25,
+  "probability_contact": 0.8824,
+  "features": {
+    "lap_var": 24.2527, "mean": 55.1213, "std": 23.2327,
+    "edge_den": 0.0128, "grad_mag": 40.9087
+  },
+  "latency_ms": 23.5
+}</code></pre>
+<p><strong>其他事件</strong>：</p>
+<div class="table-wrap"><table>
+  <tr><th>event</th><th>欄位</th><th>時機</th></tr>
+  <tr><td><code>startup</code></td><td><code>version</code>, <code>config_path</code>, <code>paths</code></td><td>服務啟動時</td></tr>
+  <tr><td><code>shutdown</code></td><td><code>version</code></td><td>服務停止時</td></tr>
+  <tr><td><code>predict_error</code></td><td><code>filename</code>, <code>error</code></td><td>上傳的影像無法解碼、為空、或 ROI 無效</td></tr>
+</table></div>
+<p><strong>查詢範例</strong>：</p>
+<pre><code># 查看今日所有 contact 判定
+grep '"status": "contact"' logs/aoi_api.log | wc -l
+
+# 用 jq 挑出所有 latency &gt; 100ms 的紀錄
+jq -c 'select(.event == "predict" and .latency_ms &gt; 100)' logs/aoi_api.log
+
+# pandas 快速匯入
+python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True); print(df.describe())"</code></pre>
+
+<h2 id="endpoints">6. HTTP endpoints</h2>
 
 <h3><code>GET /api/v1/health</code> — 可用性檢查</h3>
 <p><code>contact-monitor-service</code> 在 <code>STARTING</code> 狀態會用這個 endpoint 確認 AOI 已經準備好。</p>
 <pre><code>{
   "status": "ok",
   "service": "aoi-api",
-  "version": "7.2",
+  "version": "7.3",
   "calibrated": true
 }</code></pre>
 
@@ -174,7 +257,7 @@ monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示</code></
   <tr><td><code>fullframe_image</code></td><td>已儲存的原圖 URL path（<code>&lt;timestamp&gt;.jpg</code>），上面有藍色 ROI 外框——給人工 offline review 用</td></tr>
   <tr><td><code>laplacian_score</code></td><td>等同於 <code>features.lap_var</code>——保留以符合設計文件相容欄位</td></tr>
   <tr><td><code>probability_contact</code></td><td>logistic 模型輸出的 0.0 – 1.0 機率</td></tr>
-  <tr><td><code>features</code></td><td>五個特徵的全部數值（詳見 §7）</td></tr>
+  <tr><td><code>features</code></td><td>五個特徵的全部數值（詳見 §9）</td></tr>
 </table></div>
 
 <h3><code>GET /local_output/contact/&lt;file&gt;.jpg</code> 與 <code>/local_output/non-contact/&lt;file&gt;.jpg</code> — 取回已儲存的 JPG</h3>
@@ -182,10 +265,10 @@ monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示</code></
 <code>http://192.168.137.101:8000/local_output/contact/20261107_123451_018.jpg</code></p>
 <div class="note"><code>local_output/calibration.json</code> <strong>不會</strong>被對外提供，因為我們只掛載 <code>contact/</code> 與 <code>non-contact/</code> 兩個子目錄。</div>
 
-<h2 id="batch">5. 批次掃描工具 — <code>scan_batch.py</code></h2>
+<h2 id="batch">7. 批次掃描工具 — <code>scan_batch.py</code></h2>
 <p>掃描資料夾裡的所有影像，逐張呼叫 API，印出每一張的 KPI 與判定、最後顯示 summary。本工具不做任何裁切——API 內部完全處理。</p>
 
-<h3>5a. 基本用法</h3>
+<h3>7a. 基本用法</h3>
 <pre><code>python scan_batch.py samples/</code></pre>
 <p>預期輸出：</p>
 <pre><code>AOI API      : http://localhost:8000
@@ -202,16 +285,16 @@ non_contact.png       non_contact   0.0021    12.27     7.43     0.0048   48.39 
 scanned      : 2   contact: 1   non_contact: 1   errors: 0
 avg latency  : 13.5 ms</code></pre>
 
-<h3>5b. 有 label 時量測準確率</h3>
+<h3>7b. 有 label 時量測準確率</h3>
 <p>把資料放到 <code>&lt;root&gt;/contact/</code> 和 <code>&lt;root&gt;/non-contact/</code> 子目錄，然後加 <code>--labeled</code>：</p>
 <pre><code>python scan_batch.py labeled_data/ --labeled</code></pre>
 <p>輸出會多一個 <code>truth</code> 欄位，summary 也會附上 <code>accuracy</code>。</p>
 
-<h3>5c. 輸出成 CSV</h3>
+<h3>7c. 輸出成 CSV</h3>
 <pre><code>python scan_batch.py samples/ --csv results.csv</code></pre>
 <p>CSV 會包含兩個已儲存檔案的 URL path（<code>roi_image</code> 與 <code>fullframe_image</code>）。</p>
 
-<h3>5d. 指定不同的 API 位址</h3>
+<h3>7d. 指定不同的 API 位址</h3>
 <pre><code>python scan_batch.py samples/ --url http://192.168.137.101:8000</code></pre>
 
 <h3>所有參數</h3>
@@ -224,7 +307,7 @@ options:
   --csv PATH           將每張結果寫入指定 CSV 檔
   --labeled            把 &lt;path&gt; 當作含 ./contact/ 和 ./non-contact/ 的 root</code></pre>
 
-<h2 id="monitor">6. <code>contact-monitor-service</code> 應該怎麼呼叫這個 API</h2>
+<h2 id="monitor">8. <code>contact-monitor-service</code> 應該怎麼呼叫這個 API</h2>
 <p>Monitor 端的工作非常單純：<strong>不要裁切、不要 resize，直接把 RCM 整張 snapshot 以 <code>file</code> 欄位 POST 給 <code>/api/v1/predict</code></strong>。</p>
 
 <h3>相機設定（必須）</h3>
@@ -261,14 +344,21 @@ resp = r.json()
 </table></div>
 <p>若實際數值嚴重偏離這些區間（例如 <code>lap_var = 3</code> 或 <code>lap_var = 80</code>），代表相機解析度或 framing 不對，不是 AOI 的 bug——請確認相機設為 1540 × 1050 且構圖正確。</p>
 
-<h3>儲存量估算</h3>
-<p>Monitor 每 <code>aoi.interval_ms</code> 呼叫一次（預設 200 ms = 5 Hz），每次 AOI 寫兩個 JPG（原圖 ~450 KB、裁切 ~20 KB）。粗估：</p>
+<h3>儲存量估算 + 檔案回收</h3>
+<p>Monitor 每 <code>aoi.interval_ms</code> 呼叫一次（預設 200 ms = 5 Hz），每次 AOI 寫兩個 JPG（原圖 ~450 KB、裁切 ~20 KB），以及一行約 400 B 的 JSONL log。粗估：</p>
 <ul>
-  <li>每小時：18,000 次呼叫 × 2 檔 ≈ <strong>36,000 檔、約 1 GB</strong></li>
-  <li>設計文件 §9 的 log-cleaner 必須同時清理 <code>./local_output/contact/</code> 與 <code>./local_output/non-contact/</code>，建議保留 24 小時。</li>
+  <li>每小時：<strong>36,000 檔、約 1 GB</strong> 的 JPG，加上 <strong>~30 MB</strong> 的 log 行</li>
+  <li>檔案回收 service 應同時清理以下路徑（都在 <code>config/aoi_api.json</code> 可讀取到）：
+    <ul>
+      <li><code>paths.contact_dir</code>（預設 <code>./local_output/contact/*.jpg</code>）</li>
+      <li><code>paths.non_contact_dir</code>（預設 <code>./local_output/non-contact/*.jpg</code>）</li>
+      <li><code>paths.log_dir</code>（預設 <code>./logs/aoi_api.log.YYYY-MM-DD</code>——未輪替的 <code>aoi_api.log</code> 請勿刪除）</li>
+    </ul>
+    建議 JPG 保留 24 小時，log 檔由 <code>logging.backup_count</code> 參數自動限制（預設 7 天）。
+  </li>
 </ul>
 
-<h2 id="features">7. 特徵說明</h2>
+<h2 id="features">9. 特徵說明</h2>
 <p>五個特徵都計算於 ROI 的灰階影像、且經過 5×5 Gaussian blur。挑選標準：<strong>至少兩個特徵能單獨區分 contact / non-contact</strong>，當 probe card 類型改變時仍然 robust。</p>
 <div class="table-wrap"><table>
   <tr><th>Feature</th><th>衡量目標</th><th style="text-align:right">模型權重</th></tr>
@@ -281,25 +371,27 @@ resp = r.json()
 </table></div>
 <p>預測公式：<code>sigmoid( weight · ((feature − mean) / std) + intercept )</code>，在 0.5 處做判定。</p>
 
-<h2 id="recal">8. 相機 / FOV 變更時的重新校正</h2>
+<h2 id="recal">10. 相機 / FOV 變更時的重新校正</h2>
 <p>若鏡頭、FOV、或 zoom 有明顯變動，特徵分布會偏移，需要重新校正。收集大約 10 張 contact 與 10 張 non-contact 的 labeled 影像，再執行校正 script（請找 API owner——這是一個小的訓練 script，會重寫 <code>calibration.json</code>）。</p>
 <p>API 的程式與 endpoint 在校正前後<strong>不會改變</strong>。</p>
 
-<h2 id="open">9. 待確認事項（截至此版）</h2>
+<h2 id="open">11. 待確認事項（截至此版）</h2>
 <ol>
   <li><strong><code>roi_image</code> 格式確定。</strong> 回傳的是本 API 內建 StaticFiles 提供的 <strong>URL path</strong>（<code>GET /local_output/contact/&lt;file&gt;.jpg</code> 或 <code>/local_output/non-contact/&lt;file&gt;.jpg</code>），monitor 自行加上 base URL 就能給前端 Web UI 顯示。</li>
   <li><strong><code>category</code> 欄位取消。</strong> 設計文件 <code>monitor.json</code> 裡的 <code>aoi.category</code> 不再需要——本 API 通用於所有 probe card。Monitor 可將該欄位留空，或（更保險）直接從上傳 payload 中移除。</li>
-  <li><strong>Log rotation。</strong> 本 API 每次判定都會在對應子資料夾產生 2 個 JPG。請將 <code>./local_output/contact/</code> 與 <code>./local_output/non-contact/</code> 同時加入設計文件 §9 log-cleaner 的清理範圍，建議保留 24 小時。</li>
+  <li><strong>Log rotation + 檔案回收。</strong> JPG 儲存在 <code>paths.contact_dir</code> / <code>paths.non_contact_dir</code>；JSON Lines log 儲存在 <code>paths.log_dir</code>，每日午夜自動輪替。檔案回收 service 請讀取 <code>config/aoi_api.json</code> 來知道所有需要掃描的路徑（詳見 §8 儲存量估算）。</li>
 </ol>
 
-<h2 id="trouble">10. 疑難排解</h2>
+<h2 id="trouble">12. 疑難排解</h2>
 <div class="table-wrap"><table>
   <tr><th>現象</th><th>可能原因</th><th>修正方式</th></tr>
-  <tr><td><code>GET /api/v1/health</code> 回傳 <code>"calibrated": false</code></td><td><code>calibration.json</code> 缺失或格式有誤</td><td>從本 package 還原該檔案</td></tr>
-  <tr><td>已知是 contact 的影像都被判成 <code>non_contact</code> 且 <code>p ≈ 0.0</code></td><td>相機解析度或 framing 不對</td><td>用 §6 的表格檢查 <code>features</code> 值，確認相機設為 1540 × 1050</td></tr>
+  <tr><td><code>GET /api/v1/health</code> 回傳 <code>"calibrated": false</code></td><td><code>calibration.json</code> 缺失或格式有誤</td><td>從本 package 還原該檔案；確認 <code>config/aoi_api.json</code> 的 <code>paths.calibration_json</code> 指到對的位置</td></tr>
+  <tr><td>已知是 contact 的影像都被判成 <code>non_contact</code> 且 <code>p ≈ 0.0</code></td><td>相機解析度或 framing 不對</td><td>用 §8 的表格檢查 <code>features</code> 值，確認相機設為 1540 × 1050</td></tr>
   <tr><td>POST 回 <code>422 Unprocessable Entity</code></td><td>multipart 欄位名錯誤</td><td>欄位名必須完全是 <code>file</code></td></tr>
   <tr><td>POST 回 <code>500</code> 且訊息含 <code>計算出的 ROI 範圍無效</code></td><td>上傳的圖太小，reference_roi 裁出來的 crop 是 0×0</td><td>確認上傳的是完整 RCM 截圖，不是已經裁好的 ROI</td></tr>
-  <tr><td>POST 回 <code>500</code> 且訊息含 <code>calibration.json missing</code></td><td>calibration.json 損壞或缺少 feature 資訊</td><td>從 package 還原，重新啟動服務</td></tr>
+  <tr><td>POST 回 <code>500</code> 且訊息含 <code>calibration missing</code></td><td>calibration.json 損壞或缺少 feature 資訊</td><td>從 package 還原，重新啟動服務</td></tr>
+  <tr><td>啟動時 stderr 出現 <code>WARN: config ... not found — using defaults</code></td><td>config 檔不存在或路徑錯</td><td>確認從 package 根目錄啟動；或設定 <code>AOI_API_CONFIG</code> 環境變數</td></tr>
+  <tr><td><code>logs/aoi_api.log</code> 一直沒有新內容</td><td><code>paths.log_dir</code> 無寫入權限，或 handler 初始化失敗</td><td>檢查資料夾存在性與權限；重啟後觀察 stderr</td></tr>
   <tr><td>Latency &gt; 200 ms</td><td>AOI 本身約 25 ms，問題不在 AOI</td><td>檢查網路以及 RCM 取圖時間</td></tr>
 </table></div>
 

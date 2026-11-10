@@ -1,0 +1,18 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8000
+  },
+  "paths": {
+    "calibration_json": "./local_output/calibration.json",
+    "contact_dir": "./local_output/contact",
+    "non_contact_dir": "./local_output/non-contact",
+    "log_dir": "./logs"
+  },
+  "logging": {
+    "level": "INFO",
+    "filename": "aoi_api.log",
+    "rotation": "daily",
+    "backup_count": 7
+  }
+}

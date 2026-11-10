@@ -1,59 +1,180 @@
-"""AOI-API for the AH9710 Contact Monitor system — universal build.
+"""AOI-API for the AH9710 Contact Monitor system — v7.3.
 
-Classifies whether the probe needle has contacted the probe card:
-  contact     = ROI is in focus
-  non_contact = ROI is defocused
+Config-driven: all filesystem paths, server port, and log settings come from
+./config/aoi_api.json (override via the AOI_API_CONFIG env var). If the file
+is missing or unreadable the service falls back to built-in defaults.
 
-Contract (v7.2):
-  - Caller uploads the FULL RCM snapshot (recommended camera: 1540 × 1050).
-  - This API crops the uploaded frame using the fixed reference_roi from
-    calibration.json, runs the logistic model on the crop, and saves BOTH:
-      * the original frame with a blue ROI rectangle drawn on it
-         → ./local_output/<status>/<timestamp>.jpg
-      * the cropped ROI itself
-         → ./local_output/<status>/cropped_<timestamp>.jpg
-    where <status> ∈ {contact, non-contact}.
-  - Returns a JSON with `status`, `probability_contact`, `features`,
-    `laplacian_score`, and URL paths to both saved files.
+Per-prediction logging:
+  Every call to /api/v1/predict appends one JSON line to
+  <log_dir>/aoi_api.log. The file rotates daily (midnight) and the most recent
+  `backup_count` days are kept. Operators / the file-cleanup service can read
+  the same config file to learn the paths to sweep.
 
-Reference_roi (fractions of the full frame) is fixed for all probe-card types:
-    rx1 = 0.25, ry1 = 0.45, rx2 = 0.50, ry2 = 0.85
+Log event schema (JSON Lines):
+  {"ts":"<iso8601>","level":"INFO","event":"predict", "filename":"...",
+   "status":"contact|non_contact",
+   "roi_image":"/local_output/<status>/cropped_<ts>.jpg",
+   "fullframe_image":"/local_output/<status>/<ts>.jpg",
+   "laplacian_score":..., "probability_contact":...,
+   "features":{...}, "latency_ms":...}
+  Other events: "startup", "shutdown", "predict_error".
 """
-import cv2
 import json
+import logging
 import math
 import os
+import sys
+import time
+from contextlib import asynccontextmanager
 from datetime import datetime
+from logging.handlers import TimedRotatingFileHandler
 
+import cv2
 import numpy as np
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 import uvicorn
 
-app = FastAPI(title="AOI Contact-Detection API", version="7.2")
 
-OUTPUT_DIR = "./local_output"
-CONTACT_DIR = os.path.join(OUTPUT_DIR, "contact")
-NONCONTACT_DIR = os.path.join(OUTPUT_DIR, "non-contact")
-CALIBRATION_PATH = os.path.join(OUTPUT_DIR, "calibration.json")
-os.makedirs(CONTACT_DIR, exist_ok=True)
-os.makedirs(NONCONTACT_DIR, exist_ok=True)
+# ---------- Config loading ----------
+CONFIG_PATH = os.environ.get("AOI_API_CONFIG", "./config/aoi_api.json")
 
-# Only the two class subfolders are exposed as static routes — calibration.json
-# sitting beside them is NOT served.
+DEFAULT_CONFIG = {
+    "server": {"host": "0.0.0.0", "port": 8000},
+    "paths": {
+        "calibration_json": "./local_output/calibration.json",
+        "contact_dir": "./local_output/contact",
+        "non_contact_dir": "./local_output/non-contact",
+        "log_dir": "./logs",
+    },
+    "logging": {
+        "level": "INFO",
+        "filename": "aoi_api.log",
+        "rotation": "daily",
+        "backup_count": 7,
+    },
+}
+
+
+def _deep_merge(base: dict, override: dict) -> dict:
+    out = dict(base)
+    for k, v in override.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = _deep_merge(out[k], v)
+        else:
+            out[k] = v
+    return out
+
+
+def load_config(path: str = CONFIG_PATH) -> dict:
+    if not os.path.exists(path):
+        print(f"WARN: config {path} not found — using defaults", file=sys.stderr)
+        return dict(DEFAULT_CONFIG)
+    try:
+        with open(path) as f:
+            user_cfg = json.load(f)
+        return _deep_merge(DEFAULT_CONFIG, user_cfg)
+    except (OSError, ValueError) as e:
+        print(f"WARN: cannot read config {path}: {e} — using defaults", file=sys.stderr)
+        return dict(DEFAULT_CONFIG)
+
+
+CFG = load_config()
+
+CALIBRATION_PATH = CFG["paths"]["calibration_json"]
+CONTACT_DIR = CFG["paths"]["contact_dir"]
+NONCONTACT_DIR = CFG["paths"]["non_contact_dir"]
+LOG_DIR = CFG["paths"]["log_dir"]
+
+for d in (CONTACT_DIR, NONCONTACT_DIR, LOG_DIR):
+    os.makedirs(d, exist_ok=True)
+
+
+# ---------- JSON Lines logger ----------
+class JsonLineFormatter(logging.Formatter):
+    """Serialize log records whose msg is a dict to a one-line JSON object.
+    Plain-string messages are wrapped under {"message": ...}."""
+
+    def format(self, record: logging.LogRecord) -> str:
+        if isinstance(record.msg, dict):
+            payload = dict(record.msg)
+        else:
+            payload = {"message": record.getMessage()}
+        out = {
+            "ts": datetime.now().isoformat(timespec="milliseconds"),
+            "level": record.levelname,
+        }
+        out.update(payload)
+        return json.dumps(out, ensure_ascii=False, default=str)
+
+
+def _build_logger() -> logging.Logger:
+    log_path = os.path.join(LOG_DIR, CFG["logging"]["filename"])
+    handler = TimedRotatingFileHandler(
+        log_path,
+        when="midnight",
+        interval=1,
+        backupCount=int(CFG["logging"]["backup_count"]),
+        encoding="utf-8",
+        utc=False,
+    )
+    handler.suffix = "%Y-%m-%d"  # rotated files: aoi_api.log.2026-11-10
+    handler.setFormatter(JsonLineFormatter())
+    lg = logging.getLogger("aoi_api")
+    # Clear any pre-existing handlers (defensive on module re-imports).
+    for h in list(lg.handlers):
+        lg.removeHandler(h)
+    lg.addHandler(handler)
+    lg.setLevel(getattr(logging, str(CFG["logging"]["level"]).upper(), logging.INFO))
+    lg.propagate = False
+    return lg
+
+
+logger = _build_logger()
+
+
+def log_event(event: str, **fields) -> None:
+    """Emit one JSON line to the rotating log."""
+    logger.info({"event": event, **fields})
+
+
+# ---------- FastAPI app ----------
+@asynccontextmanager
+async def lifespan(app_: FastAPI):
+    log_event(
+        "startup",
+        version=app_.version,
+        config_path=os.path.abspath(CONFIG_PATH),
+        paths={
+            "calibration_json": os.path.abspath(CALIBRATION_PATH),
+            "contact_dir": os.path.abspath(CONTACT_DIR),
+            "non_contact_dir": os.path.abspath(NONCONTACT_DIR),
+            "log_dir": os.path.abspath(LOG_DIR),
+        },
+    )
+    try:
+        yield
+    finally:
+        log_event("shutdown", version=app_.version)
+
+
+app = FastAPI(title="AOI Contact-Detection API", version="7.3", lifespan=lifespan)
+
+# Static mounts for saved image retrieval — URLs are fixed regardless of the
+# physical directories the config points at, so the contract with the monitor
+# stays stable.
 app.mount("/local_output/contact",
           StaticFiles(directory=CONTACT_DIR), name="contact")
 app.mount("/local_output/non-contact",
           StaticFiles(directory=NONCONTACT_DIR), name="non_contact")
 
-# Blue overlay (BGR) for the ROI rectangle drawn on the saved full frame.
 ROI_OVERLAY_COLOR_BGR = (255, 0, 0)
 ROI_OVERLAY_THICKNESS = 3
 
 
+# ---------- Feature pipeline ----------
 def compute_features(roi_bgr):
-    """Path C — 5 features on the grayscale ROI (post 5×5 Gaussian blur)."""
     gray = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2GRAY)
     g = cv2.GaussianBlur(gray, (5, 5), 0)
     lap_var = float(cv2.Laplacian(g, cv2.CV_64F).var())
@@ -70,16 +191,17 @@ def compute_features(roi_bgr):
 
 def load_calibration() -> dict:
     if not os.path.exists(CALIBRATION_PATH):
-        raise HTTPException(status_code=500, detail="calibration.json not found")
+        raise HTTPException(status_code=500,
+            detail=f"calibration not found at {CALIBRATION_PATH}")
     try:
         m = json.load(open(CALIBRATION_PATH))
     except (OSError, ValueError) as e:
-        raise HTTPException(status_code=500, detail=f"Unreadable calibration.json: {e}")
+        raise HTTPException(status_code=500, detail=f"Unreadable calibration: {e}")
     for k in ("features", "feature_means", "feature_stds", "weights", "intercept",
               "rx1", "ry1", "rx2", "ry2"):
         if k not in m:
             raise HTTPException(status_code=500,
-                detail=f"calibration.json missing '{k}' — recalibrate.")
+                detail=f"calibration missing '{k}' — recalibrate.")
     return m
 
 
@@ -104,7 +226,6 @@ def crop_frame(img_bgr, rx1, ry1, rx2, ry2):
 
 
 def draw_roi_overlay(img_bgr, rx1, ry1, rx2, ry2):
-    """Return a copy of img_bgr with a blue ROI rectangle drawn on it."""
     out = img_bgr.copy()
     x1, y1, x2, y2 = roi_pixels(img_bgr, rx1, ry1, rx2, ry2)
     cv2.rectangle(out, (x1, y1), (x2, y2),
@@ -112,6 +233,7 @@ def draw_roi_overlay(img_bgr, rx1, ry1, rx2, ry2):
     return out
 
 
+# ---------- Endpoints ----------
 @app.get("/", include_in_schema=False)
 def root():
     return RedirectResponse(url="/docs")
@@ -119,7 +241,6 @@ def root():
 
 @app.get("/api/v1/health")
 def health():
-    """Readiness probe used by contact-monitor-service during STARTING."""
     calibrated = False
     try:
         load_calibration()
@@ -136,10 +257,6 @@ def health():
 
 @app.get("/api/v1/config")
 def config():
-    """Expose the universal reference ROI + model metadata.
-    Monitor uses `reference_roi` to confirm its RCM framing matches the
-    training geometry (recommended: camera at 1540 × 1050 so the native
-    crop is 385 × 420)."""
     model = load_calibration()
     return {
         "reference_roi": {k: model[k] for k in ("rx1", "ry1", "rx2", "ry2")},
@@ -155,24 +272,24 @@ def config():
 
 @app.post("/api/v1/predict")
 async def predict(
-    file: UploadFile = File(..., description="RCM snapshot (recommended 1540 × 1050)"),
+    file: UploadFile = File(..., description="完整 RCM 截圖（建議 1540 × 1050）"),
 ):
-    """Receive a full RCM snapshot, crop it with reference_roi, classify the
-    crop, and save both the overlaid full frame and the raw crop to
-    ./local_output/<contact|non-contact>/.
-    """
+    t0 = time.perf_counter()
     model = load_calibration()
     rx1, ry1, rx2, ry2 = model["rx1"], model["ry1"], model["rx2"], model["ry2"]
 
     contents = await file.read()
     img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
     if img is None:
+        log_event("predict_error", filename=file.filename, error="decode_failed")
         raise HTTPException(status_code=400, detail="無法解析上傳的影像")
     if img.size == 0:
+        log_event("predict_error", filename=file.filename, error="empty_image")
         raise HTTPException(status_code=400, detail="影像為空")
 
     crop = crop_frame(img, rx1, ry1, rx2, ry2)
     if crop.size == 0:
+        log_event("predict_error", filename=file.filename, error="roi_invalid")
         raise HTTPException(status_code=500, detail="計算出的 ROI 範圍無效")
 
     feats = compute_features(crop)
@@ -192,15 +309,29 @@ async def predict(
                 draw_roi_overlay(img, rx1, ry1, rx2, ry2))
     cv2.imwrite(os.path.join(out_dir, crop_name), crop)
 
-    return {
-        "status": status,                                  # design-doc required
-        "roi_image": f"{url_prefix}/{crop_name}",          # cropped 385×420 for web display
-        "fullframe_image": f"{url_prefix}/{full_name}",    # full frame + blue ROI overlay for review
-        "laplacian_score": round(feats["lap_var"], 2),     # design-doc compat field
+    response = {
+        "status": status,
+        "roi_image": f"{url_prefix}/{crop_name}",
+        "fullframe_image": f"{url_prefix}/{full_name}",
+        "laplacian_score": round(feats["lap_var"], 2),
         "probability_contact": round(prob, 4),
         "features": {k: round(v, 4) for k, v in feats.items()},
     }
 
+    log_event(
+        "predict",
+        filename=file.filename,
+        **response,
+        latency_ms=round((time.perf_counter() - t0) * 1000.0, 2),
+    )
+
+    return response
+
 
 if __name__ == "__main__":
-    uvicorn.run("prob_api:app", host="0.0.0.0", port=8000, reload=False)
+    uvicorn.run(
+        "prob_api:app",
+        host=CFG["server"]["host"],
+        port=int(CFG["server"]["port"]),
+        reload=False,
+    )
