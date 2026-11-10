@@ -1,18 +1,18 @@
-"""AOI-API for the AH9710 Contact Monitor system — v7.4.
+"""AOI-API for the AH9710 Contact Monitor system — v7.5.
 
 Config-driven: all filesystem paths, server port, and log settings come from
 ./config/aoi_api.json (override via the AOI_API_CONFIG env var). If the file
 is missing or unreadable the service falls back to built-in defaults.
 
-File persistence policy (changed in v7.4):
-  - CONTACT     → two JPGs saved to ./local_output/contact/
-                  (<ts>.jpg with blue ROI overlay + cropped_<ts>.jpg)
-  - NON_CONTACT → nothing written to disk; response fields `roi_image` and
-                  `fullframe_image` are null. The non-contact folder and
-                  StaticFiles mount are kept for forward compatibility but
-                  stay empty at runtime.
-  Rationale: at 5 Hz most ticks are non_contact and would flood disk;
-  operators only need the contact frames to pin down Z_0.
+File persistence policy (changed in v7.5):
+  - Every tick: the full RCM frame is saved with a YELLOW ROI rectangle
+    drawn on it, routed by status:
+       contact     → ./local_output/contact/<ts>.jpg
+       non_contact → ./local_output/non-contact/<ts>.jpg
+  - Additionally on CONTACT: the 385×420 crop is saved as
+       ./local_output/contact/cropped_<ts>.jpg
+  Response: `fullframe_image` is always set; `roi_image` is a URL on
+  contact and null on non_contact (no crop file to point to).
 
 Per-prediction logging:
   Every call to /api/v1/predict appends one JSON line to
@@ -23,7 +23,7 @@ Per-prediction logging:
 Log event schema (JSON Lines):
   {"ts":"<iso8601>","level":"INFO","event":"predict","filename":"...",
    "status":"contact|non_contact",
-   "roi_image": "<url or null>", "fullframe_image": "<url or null>",
+   "roi_image": "<url or null>", "fullframe_image": "<url>",
    "laplacian_score":..., "probability_contact":...,
    "features":{...}, "latency_ms":...}
   Other events: "startup", "shutdown", "predict_error".
@@ -168,7 +168,7 @@ async def lifespan(app_: FastAPI):
         log_event("shutdown", version=app_.version)
 
 
-app = FastAPI(title="AOI Contact-Detection API", version="7.4", lifespan=lifespan)
+app = FastAPI(title="AOI Contact-Detection API", version="7.5", lifespan=lifespan)
 
 # Static mounts for saved image retrieval — URLs are fixed regardless of the
 # physical directories the config points at, so the contract with the monitor
@@ -178,7 +178,8 @@ app.mount("/local_output/contact",
 app.mount("/local_output/non-contact",
           StaticFiles(directory=NONCONTACT_DIR), name="non_contact")
 
-ROI_OVERLAY_COLOR_BGR = (255, 0, 0)
+# Yellow in BGR (OpenCV channel order) = (0, 255, 255). Changed from blue in v7.5.
+ROI_OVERLAY_COLOR_BGR = (0, 255, 255)
 ROI_OVERLAY_THICKNESS = 3
 
 
@@ -306,26 +307,29 @@ async def predict(
     is_contact = prob >= 0.5
     status = "contact" if is_contact else "non_contact"
 
-    # Only CONTACT crops are persisted to disk — operators review these to pin
-    # down Z_0. Non-contact snapshots are the expected default state and would
-    # flood storage (~1 GB/hour at 5 Hz), so they are not saved.
+    # v7.5 persistence:
+    #   Every tick → save the overlaid fullframe into the status subfolder.
+    #   On contact → additionally save the cropped ROI.
+    now = datetime.now()
+    stamp = now.strftime("%Y%m%d_%H%M%S_") + f"{now.microsecond // 1000:03d}"
+    full_name = f"{stamp}.jpg"
+    out_dir = CONTACT_DIR if is_contact else NONCONTACT_DIR
+    url_prefix = "/local_output/contact" if is_contact else "/local_output/non-contact"
+
+    cv2.imwrite(os.path.join(out_dir, full_name),
+                draw_roi_overlay(img, rx1, ry1, rx2, ry2))
+    fullframe_url = f"{url_prefix}/{full_name}"
+
     roi_url = None
-    fullframe_url = None
     if is_contact:
-        now = datetime.now()
-        stamp = now.strftime("%Y%m%d_%H%M%S_") + f"{now.microsecond // 1000:03d}"
-        full_name = f"{stamp}.jpg"
         crop_name = f"cropped_{stamp}.jpg"
-        cv2.imwrite(os.path.join(CONTACT_DIR, full_name),
-                    draw_roi_overlay(img, rx1, ry1, rx2, ry2))
         cv2.imwrite(os.path.join(CONTACT_DIR, crop_name), crop)
         roi_url = f"/local_output/contact/{crop_name}"
-        fullframe_url = f"/local_output/contact/{full_name}"
 
     response = {
         "status": status,
-        "roi_image": roi_url,                  # null on non_contact
-        "fullframe_image": fullframe_url,      # null on non_contact
+        "roi_image": roi_url,                  # URL on contact; null on non_contact
+        "fullframe_image": fullframe_url,      # always set
         "laplacian_score": round(feats["lap_var"], 2),
         "probability_contact": round(prob, 4),
         "features": {k: round(v, 4) for k, v in feats.items()},
