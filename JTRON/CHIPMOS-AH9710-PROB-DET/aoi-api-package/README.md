@@ -14,13 +14,13 @@
 
 ```
 aoi-api-package/
-├── prob_api.py            # FastAPI 服務本體 (v7.3)
+├── prob_api.py            # FastAPI 服務本體 (v7.4)
 ├── config/
 │   └── aoi_api.json       # 所有可調整的路徑與 server/log 設定（見 §4）
 ├── local_output/
 │   ├── calibration.json   # 訓練好的模型（通用、單一物件，無 per-category 鍵）
 │   ├── contact/           # 判定為 contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
-│   └── non-contact/       # 判定為 non_contact 時的 JPG 儲存位置（原圖 + 裁切兩個檔）
+│   └── non-contact/       # （保留但不寫入；v7.4 起 non_contact 不存檔。見 §3、§8）
 ├── logs/
 │   └── aoi_api.log        # 每次 predict 的 JSON Lines 紀錄（見 §5；每日午夜輪替）
 ├── requirements.txt       # Python 相依套件
@@ -72,13 +72,14 @@ POST /api/v1/predict  multipart file=<整張 1540×1050>
 AOI API (prob_api.py)
    │ 1. 讀入 → 依 reference_roi 裁出 385×420 crop
    │ 2. 計算 5 個特徵 → logistic → status
-   │ 3. 存 2 個 JPG 到 ./local_output/<status>/：
+   │ 3. **只在 contact 時**存 2 個 JPG 到 ./local_output/contact/：
    │       <timestamp>.jpg          ← 原圖 1540×1050 + 藍色 ROI 外框 (給人工檢視)
    │       cropped_<timestamp>.jpg  ← 原始 385×420 crop (給模型除錯)
-   │ 4. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
+   │    non_contact 不存檔，response 的 roi_image / fullframe_image 回 null
+   │ 4. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5；null 路徑也會如實記錄）
    │ 5. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
    ▼
-monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示
+monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示（null 時不顯示）
 ```
 
 Monitor 端的工作因此簡化：只負責 **fetch snapshot → 上傳**，裁切、存檔、日誌都由 AOI 做。
@@ -192,7 +193,7 @@ python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True
 {
   "status": "ok",
   "service": "aoi-api",
-  "version": "7.3",
+  "version": "7.4",
   "calibrated": true
 }
 ```
@@ -244,11 +245,24 @@ Response：
 | 欄位 | 說明 |
 |---|---|
 | `status` | `"contact"` 或 `"non_contact"`——monitor 需要的二元判定 |
-| `roi_image` | 已儲存的裁切後 ROI 影像 URL path（`cropped_<timestamp>.jpg`）。Web UI 依設計文件 §7 只在 `contact` 時顯示 |
-| `fullframe_image` | 已儲存的原圖 URL path（`<timestamp>.jpg`），上面有藍色 ROI 外框——給人工 offline review 用 |
+| `roi_image` | **contact 時**為裁切後 ROI 影像 URL path（`/local_output/contact/cropped_<timestamp>.jpg`）；**non_contact 時為 `null`**（v7.4 起不存檔） |
+| `fullframe_image` | **contact 時**為原圖 URL path（`/local_output/contact/<timestamp>.jpg`，上面有藍色 ROI 外框）；**non_contact 時為 `null`** |
 | `laplacian_score` | 等同於 `features.lap_var`——保留以符合設計文件相容欄位 |
 | `probability_contact` | logistic 模型輸出的 0.0 – 1.0 機率 |
 | `features` | 五個特徵的全部數值（詳見 §9） |
+
+**non_contact response 範例**（note the null paths）：
+
+```json
+{
+  "status": "non_contact",
+  "roi_image": null,
+  "fullframe_image": null,
+  "laplacian_score": 11.68,
+  "probability_contact": 0.0016,
+  "features": { "lap_var": 11.6823, "mean": 48.4003, "std": 14.0118, "edge_den": 0.0048, "grad_mag": 7.402 }
+}
+```
 
 ### `GET /local_output/contact/<file>.jpg` 與 `/local_output/non-contact/<file>.jpg` — 取回已儲存的 JPG
 
@@ -371,15 +385,14 @@ resp = r.json()
 
 ### 儲存量估算 + 檔案回收
 
-Monitor 每 `aoi.interval_ms` 呼叫一次（預設 200 ms = 5 Hz），每次 AOI 寫兩個 JPG（原圖 ~450 KB、裁切 ~20 KB），以及一行約 400 B 的 JSONL log。粗估：
+Monitor 每 `aoi.interval_ms` 呼叫一次（預設 200 ms = 5 Hz），每次 AOI 寫**一行 JSONL log**（約 400 B）；**只有在 contact 時**才寫 2 個 JPG（原圖 ~450 KB、裁切 ~20 KB）。粗估：
 
-- 每小時：**36,000 檔、約 1 GB** 的 JPG，加上 **~30 MB** 的 log 行
-- 檔案回收 service 應同時清理以下路徑（都在 `config/aoi_api.json` 可讀取到）：
-  - `paths.contact_dir` （預設 `./local_output/contact/*.jpg`）
-  - `paths.non_contact_dir` （預設 `./local_output/non-contact/*.jpg`）
-  - `paths.log_dir` （預設 `./logs/aoi_api.log.YYYY-MM-DD`——未輪替的 `aoi_api.log` 請勿刪除）
-
-  建議 JPG 保留 24 小時，log 檔由 `logging.backup_count` 參數自動限制（預設 7 天）。
+- 每小時 log 行：18,000 × ~400 B ≈ **~7 MB**（daily rotate，由 `logging.backup_count` 自動限制，預設保留 7 天）
+- 每小時 JPG：取決於實際 contact 比例。SOP 流程中 contact 是短暫瞬間，若平均每秒 ~1 次 contact 事件 → **~7,000 檔、~200 MB / 小時**；idle 或正在找針尖高度時更少
+- 檔案回收 service 要清理的路徑（都可從 `config/aoi_api.json` 讀到）：
+  - `paths.contact_dir` （預設 `./local_output/contact/*.jpg`）——建議保留 24 小時
+  - `paths.log_dir` 內已輪替的檔（`aoi_api.log.YYYY-MM-DD`）——當日 `aoi_api.log` **請勿刪除**
+  - `paths.non_contact_dir` v7.4 起不會有新檔產生（non_contact 不存檔）；資料夾保留以利未來擴充，回收 service 可以掃也可以略過
 
 ---
 
@@ -412,7 +425,8 @@ API 的程式與 endpoint 在校正前後**不會改變**。
 
 1. **`roi_image` 格式確定。** 回傳的是本 API 內建 StaticFiles 提供的 **URL path**（`GET /local_output/contact/<file>.jpg` 或 `/local_output/non-contact/<file>.jpg`），monitor 自行加上 base URL 就能給前端 Web UI 顯示。
 2. **`category` 欄位取消。** 設計文件 `monitor.json` 裡的 `aoi.category` 不再需要——本 API 通用於所有 probe card。Monitor 可將該欄位留空，或（更保險）直接從上傳 payload 中移除。
-3. **Log rotation + 檔案回收。** JPG 儲存在 `paths.contact_dir` / `paths.non_contact_dir`；JSON Lines log 儲存在 `paths.log_dir`，每日午夜自動輪替。檔案回收 service 請讀取 `config/aoi_api.json` 來知道所有需要掃描的路徑（詳見 §8 儲存量估算）。
+3. **Log rotation + 檔案回收。** JPG **只在 contact** 時儲存在 `paths.contact_dir`（v7.4 起 non_contact 不存檔）；JSON Lines log 儲存在 `paths.log_dir`，每日午夜自動輪替。檔案回收 service 請讀取 `config/aoi_api.json` 來知道所有需要掃描的路徑（詳見 §8 儲存量估算）。
+4. **v7.4 行為變更：non_contact 不存檔。** response 的 `roi_image` / `fullframe_image` 在 non_contact 時回 `null`；log 也如實記錄 `null`。完整判定紀錄仍可從 log 的 `features`、`probability_contact` 欄位重建。
 
 ---
 
