@@ -1,15 +1,23 @@
-"""AOI-API for the AH9710 Contact Monitor system — v7.5.
+"""AOI-API for the AH9710 Contact Monitor system — v7.6.
 
-Config-driven: all filesystem paths, server port, and log settings come from
-./config/aoi_api.json (override via the AOI_API_CONFIG env var). If the file
-is missing or unreadable the service falls back to built-in defaults.
+Config-driven: all filesystem paths, server port, logging and target input
+resolution come from ./config/aoi_api.json (override via the AOI_API_CONFIG
+env var). If the file is missing or unreadable the service falls back to
+built-in defaults.
 
-File persistence policy (changed in v7.5):
-  - Every tick: the full RCM frame is saved with a YELLOW ROI rectangle
-    drawn on it, routed by status:
+v7.6 change:
+  Incoming images are resized to `input_resize.width × input_resize.height`
+  (default 1280 × 1024) BEFORE cropping and feature extraction. The
+  calibration shipped with this package was fitted at 1280 × 1024 — if you
+  change the resize target you must recalibrate.
+
+File persistence policy (unchanged from v7.5):
+  - Every tick: the full frame is saved with a YELLOW ROI rectangle drawn
+    on it, routed by status:
        contact     → ./local_output/contact/<ts>.jpg
        non_contact → ./local_output/non-contact/<ts>.jpg
-  - Additionally on CONTACT: the 385×420 crop is saved as
+    (saved at the resized 1280 × 1024 dimensions)
+  - Additionally on CONTACT: the ROI crop is saved as
        ./local_output/contact/cropped_<ts>.jpg
   Response: `fullframe_image` is always set; `roi_image` is a URL on
   contact and null on non_contact (no crop file to point to).
@@ -63,6 +71,7 @@ DEFAULT_CONFIG = {
         "rotation": "daily",
         "backup_count": 7,
     },
+    "input_resize": {"width": 1280, "height": 1024},
 }
 
 
@@ -95,9 +104,20 @@ CALIBRATION_PATH = CFG["paths"]["calibration_json"]
 CONTACT_DIR = CFG["paths"]["contact_dir"]
 NONCONTACT_DIR = CFG["paths"]["non_contact_dir"]
 LOG_DIR = CFG["paths"]["log_dir"]
+TARGET_W = int(CFG["input_resize"]["width"])
+TARGET_H = int(CFG["input_resize"]["height"])
 
 for d in (CONTACT_DIR, NONCONTACT_DIR, LOG_DIR):
     os.makedirs(d, exist_ok=True)
+
+
+def resize_to_target(img_bgr):
+    """Resize to configured TARGET_W × TARGET_H. Skips if already that size."""
+    h, w = img_bgr.shape[:2]
+    if (w, h) == (TARGET_W, TARGET_H):
+        return img_bgr
+    interp = cv2.INTER_AREA if (w > TARGET_W or h > TARGET_H) else cv2.INTER_CUBIC
+    return cv2.resize(img_bgr, (TARGET_W, TARGET_H), interpolation=interp)
 
 
 # ---------- JSON Lines logger ----------
@@ -154,6 +174,7 @@ async def lifespan(app_: FastAPI):
     log_event(
         "startup",
         version=app_.version,
+        input_resize={"width": TARGET_W, "height": TARGET_H},
         config_path=os.path.abspath(CONFIG_PATH),
         paths={
             "calibration_json": os.path.abspath(CALIBRATION_PATH),
@@ -168,7 +189,7 @@ async def lifespan(app_: FastAPI):
         log_event("shutdown", version=app_.version)
 
 
-app = FastAPI(title="AOI Contact-Detection API", version="7.5", lifespan=lifespan)
+app = FastAPI(title="AOI Contact-Detection API", version="7.6", lifespan=lifespan)
 
 # Static mounts for saved image retrieval — URLs are fixed regardless of the
 # physical directories the config points at, so the contract with the monitor
@@ -269,6 +290,7 @@ def health():
 def config():
     model = load_calibration()
     return {
+        "input_resize": {"width": TARGET_W, "height": TARGET_H},
         "reference_roi": {k: model[k] for k in ("rx1", "ry1", "rx2", "ry2")},
         "model": model.get("model", "logistic"),
         "features": model.get("features", []),
@@ -276,26 +298,30 @@ def config():
         "trained_on": {
             "n_contact": model.get("n_contact"),
             "n_non_contact": model.get("n_non_contact"),
+            "resolution": model.get("input_resize"),
         },
     }
 
 
 @app.post("/api/v1/predict")
 async def predict(
-    file: UploadFile = File(..., description="完整 RCM 截圖（建議 1540 × 1050）"),
+    file: UploadFile = File(..., description="RCM 截圖（任意解析度；API 內部 resize）"),
 ):
     t0 = time.perf_counter()
     model = load_calibration()
     rx1, ry1, rx2, ry2 = model["rx1"], model["ry1"], model["rx2"], model["ry2"]
 
     contents = await file.read()
-    img = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
-    if img is None:
+    img_raw = cv2.imdecode(np.frombuffer(contents, np.uint8), cv2.IMREAD_COLOR)
+    if img_raw is None:
         log_event("predict_error", filename=file.filename, error="decode_failed")
         raise HTTPException(status_code=400, detail="無法解析上傳的影像")
-    if img.size == 0:
+    if img_raw.size == 0:
         log_event("predict_error", filename=file.filename, error="empty_image")
         raise HTTPException(status_code=400, detail="影像為空")
+
+    # v7.6: resize to TARGET_W × TARGET_H before any downstream processing.
+    img = resize_to_target(img_raw)
 
     crop = crop_frame(img, rx1, ry1, rx2, ry2)
     if crop.size == 0:

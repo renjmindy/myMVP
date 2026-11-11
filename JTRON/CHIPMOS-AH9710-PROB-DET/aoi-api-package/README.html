@@ -61,7 +61,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
 
 <h1>AH9710 AOI-API — 開發者 Package</h1>
 <p class="lead">小型 FastAPI 服務，用來判定探針針尖是否已經與 probe card 接觸（ROI 影像為對焦狀態 = <code>contact</code>，失焦 = <code>non_contact</code>）。本服務對所有 probe card 類型通用——單一 calibration、單一 fixed reference ROI。</p>
-<p class="meta">v7.5 · 服務 port <code>8000</code>（可透過 <code>config/aoi_api.json</code> 調整） · 模型：以 5 個影像特徵為輸入的 logistic regression · 判定門檻 <code>probability_contact ≥ 0.5</code> · 建議相機解析度 <strong>1540 × 1050</strong> · <strong>v7.5：ROI 外框改為黃色；non_contact 原圖恢復存檔</strong></p>
+<p class="meta">v7.6 · 服務 port <code>8000</code>（可透過 <code>config/aoi_api.json</code> 調整） · 模型：以 5 個影像特徵為輸入的 logistic regression · 判定門檻 <code>probability_contact ≥ 0.5</code> · <strong>v7.6：所有上傳影像一律 resize 到 1280 × 1024 後再處理；配合重新訓練的 calibration</strong></p>
 
 <nav class="toc" aria-label="目錄">
   <a href="#contents">1. Package 內容</a>
@@ -82,7 +82,7 @@ hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
 
 <h2 id="contents">1. 這個 Package 的內容</h2>
 <pre><code>aoi-api-package/
-├── prob_api.py            # FastAPI 服務本體 (v7.5)
+├── prob_api.py            # FastAPI 服務本體 (v7.6, 1280×1024 resize)
 ├── config/
 │   └── aoi_api.json       # 所有可調整的路徑與 server/log 設定（見 §4）
 ├── local_output/
@@ -114,26 +114,27 @@ uvicorn prob_api:app --host 0.0.0.0 --port 8000</code></pre>
 <p>當 <code>GET http://localhost:8000/api/v1/health</code> 回傳 <code>{"status":"ok", "calibrated": true, ...}</code> 就表示啟動成功。Swagger UI 位址：<code>http://localhost:8000/docs</code>。</p>
 
 <h2 id="flow">3. 整體資料流</h2>
-<pre><code>RCM 相機 (1540 × 1050)
+<pre><code>RCM 相機（任意解析度）
    │ snapshot
    ▼
 contact-monitor-service  ← 您同事的程式
-   │ 不裁切、不 resize，直接上傳 1540×1050 整張
+   │ 不裁切、不 resize，直接上傳 RCM 整張
    ▼
-POST /api/v1/predict  multipart file=&lt;整張 1540×1050&gt;
+POST /api/v1/predict  multipart file=&lt;整張 RCM&gt;
    │
    ▼
 AOI API (prob_api.py)
-   │ 1. 讀入 → 依 reference_roi 裁出 385×420 crop
-   │ 2. 計算 5 個特徵 → logistic → status
-   │ 3. 存檔（v7.5 起行為）：
-   │    每次都存：&lt;timestamp&gt;.jpg          ← 原圖 1540×1050 + <b>黃色</b> ROI 外框
+   │ 1. 讀入 → resize 到 1280 × 1024（v7.6 起）
+   │ 2. 依 reference_roi 裁出 320×410 crop
+   │ 3. 計算 5 個特徵 → logistic → status
+   │ 4. 存檔：
+   │    每次都存：&lt;timestamp&gt;.jpg          ← resized 原圖 1280×1024 + <b>黃色</b> ROI 外框
    │              - contact      → ./local_output/contact/
    │              - non_contact  → ./local_output/non-contact/
-   │    僅 contact 多存：cropped_&lt;timestamp&gt;.jpg ← 原始 385×420 crop
+   │    僅 contact 多存：cropped_&lt;timestamp&gt;.jpg ← 320×410 crop
    │                   → ./local_output/contact/cropped_*.jpg
-   │ 4. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
-   │ 5. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
+   │ 5. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
+   │ 6. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
    ▼
 monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示（null 時不顯示）</code></pre>
 <p>Monitor 端的工作因此簡化：只負責 <strong>fetch snapshot → 上傳</strong>，裁切、存檔、日誌都由 AOI 做。</p>
@@ -157,6 +158,10 @@ monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示（null �
     "filename": "aoi_api.log",
     "rotation": "daily",
     "backup_count": 7
+  },
+  "input_resize": {
+    "width": 1280,
+    "height": 1024
   }
 }</code></pre>
 <p><strong>各欄位</strong>：</p>
@@ -171,6 +176,7 @@ monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示（null �
   <tr><td><code>logging.filename</code></td><td>當日 log 檔名（固定；輪替後會變成 <code>aoi_api.log.YYYY-MM-DD</code>）</td></tr>
   <tr><td><code>logging.rotation</code></td><td>目前僅支援 <code>daily</code>（午夜輪替）；留此欄位以便未來擴充</td></tr>
   <tr><td><code>logging.backup_count</code></td><td>保留幾份輪替過的舊檔（超過的最舊檔會被 handler 自動刪除）</td></tr>
+  <tr><td><code>input_resize.width</code>, <code>.height</code></td><td><strong>v7.6 起</strong>：所有 incoming 影像一律 resize 到這個尺寸再處理。<strong>改這個值必須配合重新校正</strong>（§10）</td></tr>
 </table></div>
 <p><strong>換到不同的路徑或 port</strong>：直接改 <code>config/aoi_api.json</code>，然後重啟服務。StaticFiles 對外的 URL path 固定為 <code>/local_output/contact/...</code> 與 <code>/local_output/non-contact/...</code>，不受 <code>paths.contact_dir</code> / <code>paths.non_contact_dir</code> 影響，所以 monitor 端的呼叫合約穩定。</p>
 <p><strong>換到完全不同位置的設定檔</strong>：在啟動前設定環境變數 <code>AOI_API_CONFIG</code> 指向目標檔案即可，例如 <code>AOI_API_CONFIG=/etc/aoi/aoi_api.json python prob_api.py</code>。</p>
@@ -219,7 +225,7 @@ python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True
 <pre><code>{
   "status": "ok",
   "service": "aoi-api",
-  "version": "7.5",
+  "version": "7.6",
   "calibrated": true
 }</code></pre>
 
@@ -234,7 +240,7 @@ python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True
 }</code></pre>
 
 <h3><code>POST /api/v1/predict</code> — 判定一張 RCM 截圖</h3>
-<p><code>multipart/form-data</code>，單一欄位 <code>file</code>。上傳 <strong>完整 RCM 截圖</strong>（建議 1540 × 1050），AOI 會自行裁切。</p>
+<p><code>multipart/form-data</code>，單一欄位 <code>file</code>。上傳 <strong>完整 RCM 截圖</strong>（任意解析度；AOI 內部 resize 到 1280 × 1024 後再裁切）。</p>
 <pre><code>curl -s -X POST http://localhost:8000/api/v1/predict \
   -F 'file=@samples/contact.png' | jq .</code></pre>
 <p>Response：</p>
@@ -257,7 +263,7 @@ python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True
   <tr><th>欄位</th><th>說明</th></tr>
   <tr><td><code>status</code></td><td><span class="pill ok">contact</span> 或 <span class="pill warn">non_contact</span>——monitor 需要的二元判定</td></tr>
   <tr><td><code>roi_image</code></td><td><strong>contact 時</strong>為裁切後 ROI 影像 URL path（<code>/local_output/contact/cropped_&lt;timestamp&gt;.jpg</code>）；<strong>non_contact 時為 <code>null</code></strong>（non_contact 不會寫 cropped 檔）</td></tr>
-  <tr><td><code>fullframe_image</code></td><td><strong>一律提供</strong>。contact → <code>/local_output/contact/&lt;timestamp&gt;.jpg</code>；non_contact → <code>/local_output/non-contact/&lt;timestamp&gt;.jpg</code>。皆為原圖 1540×1050 + <strong>黃色</strong> ROI 外框，給人工 offline review 用</td></tr>
+  <tr><td><code>fullframe_image</code></td><td><strong>一律提供</strong>。contact → <code>/local_output/contact/&lt;timestamp&gt;.jpg</code>；non_contact → <code>/local_output/non-contact/&lt;timestamp&gt;.jpg</code>。皆為 resized 原圖 <strong>1280×1024</strong> + <strong>黃色</strong> ROI 外框，給人工 offline review 用</td></tr>
   <tr><td><code>laplacian_score</code></td><td>等同於 <code>features.lap_var</code>——保留以符合設計文件相容欄位</td></tr>
   <tr><td><code>probability_contact</code></td><td>logistic 模型輸出的 0.0 – 1.0 機率</td></tr>
   <tr><td><code>features</code></td><td>五個特徵的全部數值（詳見 §9）</td></tr>
@@ -323,12 +329,15 @@ options:
 <h2 id="monitor">8. <code>contact-monitor-service</code> 應該怎麼呼叫這個 API</h2>
 <p>Monitor 端的工作非常單純：<strong>不要裁切、不要 resize，直接把 RCM 整張 snapshot 以 <code>file</code> 欄位 POST 給 <code>/api/v1/predict</code></strong>。</p>
 
-<h3>相機設定（必須）</h3>
-<ul>
-  <li>RCM 全畫面解析度：<strong>1540 × 1050 px</strong></li>
-  <li>構圖：確保訓練時的 ROI 區域（左 25%–50% 寬 × 上 45%–85% 高）框到探針與 die 的接觸區</li>
-</ul>
-<p>這組設定讓 AOI 內部裁切後得到 <strong>385 × 420</strong> 原生 crop，與訓練資料幾何一致，不需要在 monitor 或 AOI 任一端做 resize。</p>
+<h3>相機設定</h3>
+<p>v7.6 起 <strong>不再要求特定相機解析度</strong>——AOI 內部會把所有上傳的影像 resize 到 1280 × 1024 再處理。Monitor 直接送原圖即可，不需裁切、不需 resize。</p>
+<p>需要注意的是<strong>構圖</strong>：確保訓練時的 ROI 區域（左 25%–50% 寬 × 上 45%–85% 高）框到探針與 die 的接觸區。這跟相機絕對解析度無關，而是跟拍攝視野（FOV）有關。</p>
+<p>AOI 內部會：</p>
+<ol>
+  <li>把上傳影像 resize 到 1280 × 1024</li>
+  <li>依 reference_roi 裁出 <strong>320 × 410</strong> px 的 crop</li>
+  <li>計算 5 個特徵並跑 logistic 判定</li>
+</ol>
 
 <h3>範例呼叫（Python）</h3>
 <pre><code>import requests
@@ -349,20 +358,20 @@ resp = r.json()
 <p>拿任何一張<strong>已知是 contact</strong> 的 RCM 截圖丟進 <code>/api/v1/predict</code>，看 response 的 <code>features</code>：</p>
 <div class="table-wrap"><table>
   <tr><th>Feature</th><th>contact 預期區間</th><th>non-contact 預期區間</th></tr>
-  <tr><td><code>lap_var</code></td><td>21 – 29</td><td>12 – 19</td></tr>
-  <tr><td><code>grad_mag</code></td><td>40 – 57</td><td>7 – 38</td></tr>
-  <tr><td><code>edge_den</code></td><td>0.01 – 0.08</td><td>0.00 – 0.01</td></tr>
-  <tr><td><code>mean</code></td><td>51 – 62</td><td>45 – 57</td></tr>
-  <tr><td><code>std</code></td><td>24 – 36</td><td>14 – 32</td></tr>
+  <tr><td><code>lap_var</code></td><td>20 – 27</td><td>10 – 18</td></tr>
+  <tr><td><code>grad_mag</code></td><td>41 – 57</td><td>7 – 39</td></tr>
+  <tr><td><code>edge_den</code></td><td>0.01 – 0.08</td><td>0.00 – 0.02</td></tr>
+  <tr><td><code>mean</code></td><td>51 – 62</td><td>45 – 58</td></tr>
+  <tr><td><code>std</code></td><td>23 – 40</td><td>14 – 36</td></tr>
 </table></div>
-<p>若實際數值嚴重偏離這些區間（例如 <code>lap_var = 3</code> 或 <code>lap_var = 80</code>），代表相機解析度或 framing 不對，不是 AOI 的 bug——請確認相機設為 1540 × 1050 且構圖正確。</p>
+<p>若實際數值嚴重偏離這些區間（例如 <code>lap_var = 3</code> 或 <code>lap_var = 80</code>），代表相機<strong>構圖</strong>錯誤或 FOV 嚴重偏移（而不是解析度問題——v7.6 已經會 resize）。請重新對準 probe / die 位置。</p>
 
 <h3>儲存量估算 + 檔案回收</h3>
 <p>Monitor 每 <code>aoi.interval_ms</code> 呼叫一次（預設 200 ms = 5 Hz）。每次 AOI 寫：</p>
 <ul>
   <li><strong>一行 JSONL log</strong>（約 400 B）</li>
-  <li><strong>一張 1540×1050 原圖</strong>（帶黃色 ROI 外框，~220 KB），依 status 存到 contact/ 或 non-contact/</li>
-  <li><strong>僅 contact 時</strong>多寫一張 385×420 crop（~40 KB）</li>
+  <li><strong>一張 1280×1024 原圖</strong>（resized + 帶黃色 ROI 外框，~170 KB），依 status 存到 contact/ 或 non-contact/</li>
+  <li><strong>僅 contact 時</strong>多寫一張 320×410 crop（~30 KB）</li>
 </ul>
 <p>粗估：</p>
 <ul>
@@ -381,18 +390,29 @@ resp = r.json()
 <h2 id="features">9. 特徵說明</h2>
 <p>五個特徵都計算於 ROI 的灰階影像、且經過 5×5 Gaussian blur。挑選標準：<strong>至少兩個特徵能單獨區分 contact / non-contact</strong>，當 probe card 類型改變時仍然 robust。</p>
 <div class="table-wrap"><table>
-  <tr><th>Feature</th><th>衡量目標</th><th style="text-align:right">模型權重</th></tr>
-  <tr><td><code>lap_var</code></td><td>Laplacian 變異數——銳利度 / 高頻訊號</td><td style="text-align:right"><strong>+2.23</strong>（主訊號）</td></tr>
-  <tr><td><code>grad_mag</code></td><td>Sobel gradient magnitude 平均——整體邊緣強度</td><td style="text-align:right"><strong>+1.28</strong>（主訊號）</td></tr>
-  <tr><td><code>edge_den</code></td><td>Canny edge pixel 比例</td><td style="text-align:right"><strong>+1.17</strong>（主訊號）</td></tr>
-  <tr><td><code>mean</code></td><td>灰階平均強度</td><td style="text-align:right">+0.44</td></tr>
-  <tr><td><code>std</code></td><td>灰階強度 std-dev</td><td style="text-align:right">−0.45（被 L2 regularize 到接近 0）</td></tr>
-  <tr><td><em>intercept</em></td><td></td><td style="text-align:right">−0.90</td></tr>
+  <tr><th>Feature</th><th>衡量目標</th><th style="text-align:right">v7.6 模型權重（1280×1024 LEFT ROI 上訓練）</th></tr>
+  <tr><td><code>lap_var</code></td><td>Laplacian 變異數——銳利度 / 高頻訊號</td><td style="text-align:right"><strong>+2.12</strong>（主訊號）</td></tr>
+  <tr><td><code>grad_mag</code></td><td>Sobel gradient magnitude 平均——整體邊緣強度</td><td style="text-align:right"><strong>+1.29</strong>（主訊號）</td></tr>
+  <tr><td><code>edge_den</code></td><td>Canny edge pixel 比例</td><td style="text-align:right"><strong>+1.34</strong>（主訊號）</td></tr>
+  <tr><td><code>mean</code></td><td>灰階平均強度</td><td style="text-align:right">+0.40</td></tr>
+  <tr><td><code>std</code></td><td>灰階強度 std-dev</td><td style="text-align:right">−0.64（被 L2 regularize 壓縮）</td></tr>
+  <tr><td><em>intercept</em></td><td></td><td style="text-align:right">−0.99</td></tr>
 </table></div>
 <p>預測公式：<code>sigmoid( weight · ((feature − mean) / std) + intercept )</code>，在 0.5 處做判定。</p>
 
-<h2 id="recal">10. 相機 / FOV 變更時的重新校正</h2>
-<p>若鏡頭、FOV、或 zoom 有明顯變動，特徵分布會偏移，需要重新校正。收集大約 10 張 contact 與 10 張 non-contact 的 labeled 影像，再執行校正 script（請找 API owner——這是一個小的訓練 script，會重寫 <code>calibration.json</code>）。</p>
+<h2 id="recal">10. 相機 / FOV / resize 變更時的重新校正</h2>
+<p>v7.6 的 calibration 是在 <strong>1280 × 1024</strong> resize 後的 LEFT ROI 上訓練的。以下情況需要重新校正：</p>
+<ul>
+  <li>鏡頭 / FOV / zoom 有明顯變動（特徵分布會偏移）</li>
+  <li>修改 <code>config/aoi_api.json</code> 的 <code>input_resize.width</code> 或 <code>.height</code>（像素密度改變，<code>lap_var</code> / <code>grad_mag</code> / <code>edge_den</code> 的絕對值會整體偏移）</li>
+</ul>
+<p>校正流程（給 API owner）：</p>
+<ol>
+  <li>收集至少 10 張 contact + 10 張 non-contact 的 labeled 影像（放到 <code>PROB/input/&lt;date&gt;/contact/</code> 和 <code>non-contact/</code>）。</li>
+  <li>把目標 resize 尺寸填進校正 script 的 <code>TARGET</code> 常數。</li>
+  <li>執行校正 script，它會：影像 resize → 裁 LEFT ROI → 跑 logistic → 覆蓋 <code>aoi-api-package/local_output/calibration.json</code>。</li>
+  <li>不必改 <code>prob_api.py</code>。</li>
+</ol>
 <p>API 的程式與 endpoint 在校正前後<strong>不會改變</strong>。</p>
 
 <h2 id="open">11. 待確認事項（截至此版）</h2>
@@ -407,13 +427,20 @@ resp = r.json()
       <li>non_contact <strong>仍不存 crop 檔</strong>，response <code>roi_image</code> 為 <code>null</code>。</li>
     </ul>
   </li>
+  <li><strong>v7.6 行為變更：</strong>
+    <ul>
+      <li>所有上傳影像一律 <strong>resize 到 1280 × 1024</strong> 再處理（可透過 <code>config/aoi_api.json</code> 的 <code>input_resize</code> 調整）。Monitor 不再需要特定相機解析度。</li>
+      <li><code>calibration.json</code> 已在 1280 × 1024 的 LEFT ROI 上重新訓練，24 張 labeled data 準確率 <strong>100%</strong>。</li>
+      <li>存檔的 <code>fullframe_image</code> 尺寸從 1540 × 1050 變為 <strong>1280 × 1024</strong>。</li>
+    </ul>
+  </li>
 </ol>
 
 <h2 id="trouble">12. 疑難排解</h2>
 <div class="table-wrap"><table>
   <tr><th>現象</th><th>可能原因</th><th>修正方式</th></tr>
   <tr><td><code>GET /api/v1/health</code> 回傳 <code>"calibrated": false</code></td><td><code>calibration.json</code> 缺失或格式有誤</td><td>從本 package 還原該檔案；確認 <code>config/aoi_api.json</code> 的 <code>paths.calibration_json</code> 指到對的位置</td></tr>
-  <tr><td>已知是 contact 的影像都被判成 <code>non_contact</code> 且 <code>p ≈ 0.0</code></td><td>相機解析度或 framing 不對</td><td>用 §8 的表格檢查 <code>features</code> 值，確認相機設為 1540 × 1050</td></tr>
+  <tr><td>已知是 contact 的影像都被判成 <code>non_contact</code> 且 <code>p ≈ 0.0</code></td><td>相機構圖 / FOV 不對（解析度已被 API 自動 resize）</td><td>用 §8 的表格檢查 <code>features</code> 值，重新對準 probe / die</td></tr>
   <tr><td>POST 回 <code>422 Unprocessable Entity</code></td><td>multipart 欄位名錯誤</td><td>欄位名必須完全是 <code>file</code></td></tr>
   <tr><td>POST 回 <code>500</code> 且訊息含 <code>計算出的 ROI 範圍無效</code></td><td>上傳的圖太小，reference_roi 裁出來的 crop 是 0×0</td><td>確認上傳的是完整 RCM 截圖，不是已經裁好的 ROI</td></tr>
   <tr><td>POST 回 <code>500</code> 且訊息含 <code>calibration missing</code></td><td>calibration.json 損壞或缺少 feature 資訊</td><td>從 package 還原，重新啟動服務</td></tr>

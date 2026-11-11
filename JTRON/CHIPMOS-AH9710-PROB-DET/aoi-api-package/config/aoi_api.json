@@ -14,5 +14,9 @@
     "filename": "aoi_api.log",
     "rotation": "daily",
     "backup_count": 7
+  },
+  "input_resize": {
+    "width": 1280,
+    "height": 1024
   }
 }

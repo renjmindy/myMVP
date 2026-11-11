@@ -6,7 +6,7 @@
 - **模型**：以 5 個低成本影像特徵（`lap_var`, `grad_mag`, `edge_den`, `mean`, `std`）為輸入的 logistic regression
 - **判定規則**：`probability_contact >= 0.5` 判為 `contact`
 - **Reference ROI（全畫面的比例座標）**：`rx1=0.25, ry1=0.45, rx2=0.50, ry2=0.85`
-- **建議相機解析度**：**1540 × 1050**，使 reference_roi 的原生裁切恰為 **385 × 420 px**（與訓練資料一致）
+- **內部 resize**：**v7.6 起，所有上傳的 RCM 影像一律 resize 到 1280 × 1024 後再處理**。相機解析度不再受限；monitor 直接送原圖即可。
 
 ---
 
@@ -14,7 +14,7 @@
 
 ```
 aoi-api-package/
-├── prob_api.py            # FastAPI 服務本體 (v7.5)
+├── prob_api.py            # FastAPI 服務本體 (v7.6, 1280×1024 resize)
 ├── config/
 │   └── aoi_api.json       # 所有可調整的路徑與 server/log 設定（見 §4）
 ├── local_output/
@@ -60,26 +60,27 @@ Swagger UI 位址：`http://localhost:8000/docs`。
 ## 3. 整體資料流
 
 ```
-RCM 相機 (1540 × 1050)
+RCM 相機（任意解析度）
    │ snapshot
    ▼
 contact-monitor-service  ← 您同事的程式
-   │ 不裁切、不 resize，直接上傳 1540×1050 整張
+   │ 不裁切、不 resize，直接上傳 RCM 整張（任意解析度）
    ▼
-POST /api/v1/predict  multipart file=<整張 1540×1050>
+POST /api/v1/predict  multipart file=<整張 RCM>
    │
    ▼
 AOI API (prob_api.py)
-   │ 1. 讀入 → 依 reference_roi 裁出 385×420 crop
-   │ 2. 計算 5 個特徵 → logistic → status
-   │ 3. 存檔（v7.5 起行為）：
-   │    每次都存：<timestamp>.jpg          ← 原圖 1540×1050 + 黃色 ROI 外框
+   │ 1. 讀入 → resize 到 1280 × 1024（v7.6 起）
+   │ 2. 依 reference_roi 裁出 320×410 crop
+   │ 3. 計算 5 個特徵 → logistic → status
+   │ 4. 存檔：
+   │    每次都存：<timestamp>.jpg          ← resized 原圖 1280×1024 + 黃色 ROI 外框
    │              - contact      → 存到 ./local_output/contact/
    │              - non_contact  → 存到 ./local_output/non-contact/
-   │    僅 contact 多存一個：cropped_<timestamp>.jpg ← 原始 385×420 crop
+   │    僅 contact 多存一個：cropped_<timestamp>.jpg ← 320×410 crop
    │                        → ./local_output/contact/cropped_*.jpg
-   │ 4. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
-   │ 5. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
+   │ 5. 寫一行 JSON Lines 到 ./logs/aoi_api.log（詳見 §5）
+   │ 6. 回傳 JSON（status、roi_image、fullframe_image、features、probability）
    ▼
 monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示（null 時不顯示）
 ```
@@ -111,6 +112,10 @@ Monitor 端的工作因此簡化：只負責 **fetch snapshot → 上傳**，裁
     "filename": "aoi_api.log",
     "rotation": "daily",
     "backup_count": 7
+  },
+  "input_resize": {
+    "width": 1280,
+    "height": 1024
   }
 }
 ```
@@ -128,6 +133,7 @@ Monitor 端的工作因此簡化：只負責 **fetch snapshot → 上傳**，裁
 | `logging.filename` | 當日 log 檔名（固定；輪替後會變成 `aoi_api.log.YYYY-MM-DD`） |
 | `logging.rotation` | 目前僅支援 `daily`（午夜輪替）；留此欄位以便未來擴充 |
 | `logging.backup_count` | 保留幾份輪替過的舊檔（超過的最舊檔會被 handler 自動刪除） |
+| `input_resize.width`, `.height` | **v7.6 起**：所有 incoming 影像一律 resize 到這個尺寸再處理。**改這個值必須配合重新校正**（見 §10） |
 
 **換到不同的路徑或 port**：直接改 `config/aoi_api.json`，然後重啟服務。StaticFiles 對外的 URL path 固定為 `/local_output/contact/...` 與 `/local_output/non-contact/...`，不受 `paths.contact_dir` / `paths.non_contact_dir` 影響，所以 monitor 端的呼叫合約穩定。
 
@@ -195,7 +201,7 @@ python -c "import pandas as pd; df = pd.read_json('logs/aoi_api.log', lines=True
 {
   "status": "ok",
   "service": "aoi-api",
-  "version": "7.5",
+  "version": "7.6",
   "calibrated": true
 }
 ```
@@ -216,7 +222,7 @@ Monitor 啟動時呼叫一次即可；用 `reference_roi` 確認 RCM framing 與
 
 ### `POST /api/v1/predict` — 判定一張 RCM 截圖
 
-`multipart/form-data`，單一欄位 `file`。上傳 **完整 RCM 截圖**（建議 1540 × 1050），AOI 會自行裁切。
+`multipart/form-data`，單一欄位 `file`。上傳 **完整 RCM 截圖**（任意解析度；AOI 內部 resize 到 1280 × 1024 後再裁切）。
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/predict \
@@ -346,12 +352,16 @@ options:
 
 Monitor 端的工作非常單純：**不要裁切、不要 resize，直接把 RCM 整張 snapshot 以 `file` 欄位 POST 給 `/api/v1/predict`**。
 
-### 相機設定（必須）
+### 相機設定
 
-- RCM 全畫面解析度：**1540 × 1050 px**
-- 構圖：確保訓練時的 ROI 區域（左 25%–50% 寬 × 上 45%–85% 高）框到探針與 die 的接觸區
+v7.6 起 **不再要求特定相機解析度**——AOI 內部會把所有上傳的影像 resize 到 1280 × 1024 再處理。Monitor 直接送原圖即可，不需裁切、不需 resize。
 
-這組設定讓 AOI 內部裁切後得到 **385 × 420** 原生 crop，與訓練資料幾何一致，不需要在 monitor 或 AOI 任一端做 resize。
+需要注意的是**構圖**：確保訓練時的 ROI 區域（左 25%–50% 寬 × 上 45%–85% 高）框到探針與 die 的接觸區。這跟相機絕對解析度無關，而是跟拍攝視野（FOV）有關。
+
+AOI 內部會：
+1. 把上傳影像 resize 到 1280 × 1024
+2. 依 reference_roi 裁出 **320 × 410** px 的 crop
+3. 計算 5 個特徵並跑 logistic 判定
 
 ### 範例呼叫（Python）
 
@@ -373,17 +383,17 @@ resp = r.json()
 
 ### 裝好之後的驗收檢查
 
-拿任何一張**已知是 contact** 的 RCM 截圖丟進 `/api/v1/predict`，看 response 的 `features`：
+拿任何一張**已知是 contact** 的 RCM 截圖丟進 `/api/v1/predict`，看 response 的 `features`（基於 1280 × 1024 resize 後的 crop）：
 
 | Feature  | contact 預期區間 | non-contact 預期區間 |
 |----------|---------------:|------------------:|
-| `lap_var`   | 21 – 29 | 12 – 19 |
-| `grad_mag`  | 40 – 57 | 7 – 38  |
-| `edge_den`  | 0.01 – 0.08 | 0.00 – 0.01 |
-| `mean`      | 51 – 62 | 45 – 57 |
-| `std`       | 24 – 36 | 14 – 32 |
+| `lap_var`   | 20 – 27 | 10 – 18 |
+| `grad_mag`  | 41 – 57 | 7 – 39  |
+| `edge_den`  | 0.01 – 0.08 | 0.00 – 0.02 |
+| `mean`      | 51 – 62 | 45 – 58 |
+| `std`       | 23 – 40 | 14 – 36 |
 
-若實際數值嚴重偏離這些區間（例如 `lap_var = 3` 或 `lap_var = 80`），代表相機解析度或 framing 不對，不是 AOI 的 bug——請確認相機設為 1540 × 1050 且構圖正確。
+若實際數值嚴重偏離這些區間（例如 `lap_var = 3` 或 `lap_var = 80`），代表相機 **構圖** 錯誤或 FOV 嚴重偏移（而不是解析度問題——v7.6 已經會 resize）。請重新對準 probe / die 位置。
 
 ### 儲存量估算 + 檔案回收
 
@@ -408,22 +418,31 @@ Monitor 每 `aoi.interval_ms` 呼叫一次（預設 200 ms = 5 Hz）。每次 AO
 
 五個特徵都計算於 ROI 的灰階影像、且經過 5×5 Gaussian blur。挑選標準：**至少兩個特徵能單獨區分 contact / non-contact**，當 probe card 類型改變時仍然 robust。
 
-| Feature     | 衡量目標 | 模型權重 |
+| Feature     | 衡量目標 | v7.6 模型權重（在 1280×1024 的 LEFT ROI 上訓練） |
 |-------------|---------|---------:|
-| `lap_var`   | Laplacian 變異數——銳利度 / 高頻訊號 | **+2.23**（主訊號） |
-| `grad_mag`  | Sobel gradient magnitude 平均——整體邊緣強度 | **+1.28**（主訊號） |
-| `edge_den`  | Canny edge pixel 比例 | **+1.17**（主訊號） |
-| `mean`      | 灰階平均強度 | +0.44 |
-| `std`       | 灰階強度 std-dev | −0.45（被 L2 regularize 到接近 0） |
-| *intercept* | | −0.90 |
+| `lap_var`   | Laplacian 變異數——銳利度 / 高頻訊號 | **+2.12**（主訊號） |
+| `grad_mag`  | Sobel gradient magnitude 平均——整體邊緣強度 | **+1.29**（主訊號） |
+| `edge_den`  | Canny edge pixel 比例 | **+1.34**（主訊號） |
+| `mean`      | 灰階平均強度 | +0.40 |
+| `std`       | 灰階強度 std-dev | −0.64（被 L2 regularize 壓縮） |
+| *intercept* | | −0.99 |
 
 預測公式：`sigmoid( weight · ((feature − mean) / std) + intercept )`，在 0.5 處做判定。
 
 ---
 
-## 10. 相機 / FOV 變更時的重新校正
+## 10. 相機 / FOV / resize 變更時的重新校正
 
-若鏡頭、FOV、或 zoom 有明顯變動，特徵分布會偏移，需要重新校正。收集大約 10 張 contact 與 10 張 non-contact 的 labeled 影像，再執行校正 script（請找 API owner——這是一個小的訓練 script，會重寫 `calibration.json`）。
+v7.6 的 calibration 是在 **1280 × 1024** resize 後的 LEFT ROI 上訓練的。以下情況需要重新校正：
+
+- 鏡頭 / FOV / zoom 有明顯變動（特徵分布會偏移）
+- 修改 `config/aoi_api.json` 的 `input_resize.width` 或 `.height`（像素密度改變，`lap_var` / `grad_mag` / `edge_den` 的絕對值會整體偏移）
+
+校正流程（給 API owner）：
+1. 收集至少 10 張 contact + 10 張 non-contact 的 labeled 影像（放到 `PROB/input/<date>/contact/` 和 `non-contact/`）。
+2. 把目標 resize 尺寸填進校正 script 的 `TARGET` 常數。
+3. 執行校正 script，它會：影像 resize → 裁 LEFT ROI → 跑 logistic → 覆蓋 `aoi-api-package/local_output/calibration.json`。
+4. 不必改 `prob_api.py`。
 
 API 的程式與 endpoint 在校正前後**不會改變**。
 
@@ -438,6 +457,10 @@ API 的程式與 endpoint 在校正前後**不會改變**。
    - ROI 外框顏色從**藍色改為黃色**（更顯眼、在深色背景下可讀性高）。
    - non_contact 的原圖**會存檔**到 `paths.non_contact_dir`，response `fullframe_image` 回該檔的 URL。
    - non_contact **仍不存 crop 檔**，response `roi_image` 為 `null`。
+5. **v7.6 行為變更**：
+   - **所有上傳影像一律 resize 到 1280 × 1024 再處理**（可透過 `config/aoi_api.json` 的 `input_resize` 調整）。Monitor 不再需要特定相機解析度。
+   - `calibration.json` 已在 1280 × 1024 的 LEFT ROI 上重新訓練，24 張 labeled data 準確率 **100%**。
+   - 存檔的 `fullframe_image` 尺寸從 1540 × 1050 變為 **1280 × 1024**。
 
 ---
 
@@ -446,7 +469,7 @@ API 的程式與 endpoint 在校正前後**不會改變**。
 | 現象 | 可能原因 | 修正方式 |
 |---|---|---|
 | `GET /api/v1/health` 回傳 `"calibrated": false` | `calibration.json` 缺失或格式有誤 | 從本 package 還原該檔案；確認 `config/aoi_api.json` 的 `paths.calibration_json` 指到對的位置 |
-| 已知是 contact 的影像都被判成 `non_contact` 且 `p ≈ 0.0` | 相機解析度或 framing 不對 | 用 §8 的表格檢查 `features` 值，確認相機設為 1540 × 1050 |
+| 已知是 contact 的影像都被判成 `non_contact` 且 `p ≈ 0.0` | 相機構圖 / FOV 不對（解析度已被 API 自動 resize） | 用 §8 的表格檢查 `features` 值，重新對準 probe / die |
 | POST 回 `422 Unprocessable Entity` | multipart 欄位名錯誤 | 欄位名必須完全是 `file` |
 | POST 回 `500` 且訊息含 `計算出的 ROI 範圍無效` | 上傳的圖太小，reference_roi 裁出來的 crop 是 0×0 | 確認上傳的是完整 RCM 截圖，不是已經裁好的 ROI |
 | POST 回 `500` 且訊息含 `calibration missing` | calibration.json 損壞或缺少 feature 資訊 | 從 package 還原，重新啟動服務 |
