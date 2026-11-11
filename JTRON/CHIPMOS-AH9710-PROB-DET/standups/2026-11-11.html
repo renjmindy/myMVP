@@ -1,0 +1,187 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>每日站會 — 2026-11-11 · AH9710 AOI-API</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #d7dce3;
+  --text: #1b2430; --muted: #5b6676; --accent: #0b6e8a; --accent-soft: #e2f1f5;
+  --ok: #1f8a4c; --ok-soft: #e3f4ea; --warn: #b26a00; --warn-soft: #fbf0dc;
+  --err: #c23a3a; --err-soft: #f9e4e4;
+  --code-bg: #0f1720; --code-text: #d7e2ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+    --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+    --ok: #4cc07c; --ok-soft: #143222; --warn: #e3a23a; --warn-soft: #3a2a10;
+    --err: #ec6b6b; --err-soft: #3b1919;
+    --code-bg: #0a0f14; --code-text: #d7e2ee;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+  --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+  --ok: #4cc07c; --ok-soft: #143222; --warn: #e3a23a; --warn-soft: #3a2a10;
+  --err: #ec6b6b; --err-soft: #3b1919;
+  --code-bg: #0a0f14; --code-text: #d7e2ee;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.6 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+main { max-width: 920px; margin: 0 auto; padding: 32px 16px 80px; }
+header { border-bottom: 1px solid var(--border); padding-bottom: 14px; margin-bottom: 24px; }
+h1 { font-size: 24px; margin: 0; }
+.meta { color: var(--muted); font-size: 13px; margin-top: 6px; }
+h2 { font-size: 18px; margin: 32px 0 10px; }
+h3 { font-size: 15px; margin: 18px 0 6px; }
+p { margin: 8px 0; }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin: 10px 0; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.card .time { color: var(--muted); font-size: 12px; font-family: ui-monospace, Consolas, monospace; }
+.card .title { font-weight: 700; font-size: 15px; margin: 2px 0 6px; }
+.card .ver { background: var(--accent-soft); color: var(--accent); padding: 0 6px; border-radius: 4px; font-size: 11px; font-weight: 700; display: inline-block; margin-left: 6px; }
+.card ul { margin: 4px 0 0; padding-left: 18px; font-size: 13px; }
+.card li { margin: 2px 0; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 13.5px; }
+th, td { border: 1px solid var(--border); padding: 6px 9px; text-align: left; vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+.pill { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 4px; font-family: ui-monospace, Consolas, monospace; }
+.pill.done { color: var(--ok); background: var(--ok-soft); }
+.pill.live { color: var(--warn); background: var(--warn-soft); }
+.pill.block { color: var(--err); background: var(--err-soft); }
+.ok { color: var(--ok); }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 8px 12px; border-radius: 0 6px 6px 0; margin: 10px 0; font-size: 13.5px; }
+ul.plain { list-style: none; padding-left: 0; }
+ul.plain li { padding: 4px 0; border-bottom: 1px solid var(--border); font-size: 13.5px; }
+ul.plain li:last-child { border-bottom: 0; }
+.commit { font-family: ui-monospace, Consolas, monospace; }
+@media (max-width: 760px) { .grid3 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>每日站會 — AH9710 AOI-API</h1>
+  <div class="meta">2026-11-11（週二，GMT+8）· <strong>Mindy</strong></div>
+</header>
+
+<!-- ===================== TL;DR ===================== -->
+<h2>TL;DR（一句話說）</h2>
+<p>今天共出了 <strong>三個 API 版本</strong>並行發佈。三者都用同一條 1280 × 1024 內部 resize pipeline、同一個 5 特徵 logistic classifier；差別在 ROI 幾何和 overlay 處理方式。<strong>v1（單一 LEFT ROI）和 v3（central ROI + 去 overlay）在 24 張 labeled data 上都是 100%</strong>；v2（dual-ROI OR）是 95.8%。</p>
+<div class="note">現場決定：以 <code>aoi-api-package/</code>（v7.6）作為上線預設；v2、v3 當做對「不同 failure mode」較敏感時的備援選擇（見 <a href="#decision">§ 三個 package 比較</a>）。</div>
+
+<!-- ===================== TODAY ===================== -->
+<h2>今日成果</h2>
+<div class="grid3">
+  <div class="card">
+    <div class="time"><code>5b7f38b</code></div>
+    <div class="title">AOI-API v2 <span class="ver">v8.0</span></div>
+    <div class="pill done">完成</div>
+    <ul>
+      <li>Dual-ROI：LEFT + 水平鏡像 RIGHT</li>
+      <li>Per-ROI 判定、OR 聚合</li>
+      <li>1280 × 1024 輸入 resize</li>
+      <li>Response 新增 <code>per_roi</code> 區塊</li>
+      <li><strong>24 張準確率：95.8%</strong>（OR）vs. 83.3%（AND）</li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="time"><code>11ed61e</code></div>
+    <div class="title">AOI-API v1 升級 <span class="ver">v7.6</span></div>
+    <div class="pill done">完成</div>
+    <ul>
+      <li>把 v2 的 1280 × 1024 resize backport 到 v1</li>
+      <li>直接沿用 v2 的 calibration.json（同一組訓練）</li>
+      <li>Config 新增 <code>input_resize</code> 區塊</li>
+      <li>README 已依 v7.6 行為改寫（繁中）</li>
+      <li><strong>24 張準確率：100%</strong></li>
+    </ul>
+  </div>
+
+  <div class="card">
+    <div class="time"><code>b1d3e96</code></div>
+    <div class="title">AOI-API v3 <span class="ver">v9.0</span></div>
+    <div class="pill done">完成</div>
+    <ul>
+      <li>UI overlay 去除（藍/青框 + 白十字）用 <code>cv2.inpaint</code></li>
+      <li>Central ROI：<code>(0.30, 0.35, 0.75, 0.80)</code></li>
+      <li>靈感來自 <code>PROB/info/motion.py</code> 的 thin-line 偵測器</li>
+      <li>Config 新增 <code>overlay_removal</code> 區塊（5 個可調欄位）</li>
+      <li><strong>24 張準確率：100%</strong>、margin 0.29</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ===================== TIMELINE ===================== -->
+<h2>今日進度</h2>
+<ul class="plain">
+  <li>完成 v2（dual-ROI）。在 24 張 labeled 資料上比較 AND 與 OR 聚合——AND 會漏掉 4 張真實 contact（右側鏡像偏弱），OR 補回這 4 張、代價是 1 個 FP。最後採用 OR。</li>
+  <li>把 resize + 重新校正 backport 到 v1。直接複用 v2 的 <code>calibration.json</code>（同一組模型），在 v1 的 config 加入 <code>input_resize</code>，並更新 <code>prob_api.py</code> 與 README。以兩張 sample 做 smoke test，確認 classifier 的輸出與 v2 的 LEFT side 完全一致。</li>
+  <li>以 Swagger UI 在瀏覽器實測 v1（v7.6）與 v2（v8.0），服務位址 <code>localhost:8000</code>，兩版皆正常運作。</li>
+  <li>參考 <code>PROB/info/motion.py</code> 的做法建立 v3，在裁切 ROI 之前先把 AOI 機器的 UI overlay 擦掉。Overlay 偵測器共迭代四次：
+    <ol>
+      <li>原本的 <code>thin_lines()</code>（shift=2）：白色十字線 OK，3px 粗的藍色內框抓不到</li>
+      <li>聯集 shift=2～4：抓到更多，但連 HUD 文字也開始被破壞</li>
+      <li><code>cv2.inpaint</code> 搭配整合 mask：太激進，把 probe tips 也擦掉（因為它們本來就是細橫線）——準確率跌到 95.8%</li>
+      <li>範圍縮限：只用藍色（<code>B − R &gt; 25</code>）+ 高亮度長 run 的十字線。100% 準確率、margin 0.29，probe tips 保留完好</li>
+    </ol>
+  </li>
+  <li>完成 v3 README（繁中，12 節）、打包成 zip、commit 並 push 到 main。</li>
+</ul>
+
+<!-- ===================== PACKAGE COMPARE ===================== -->
+<h2 id="decision">三個 package 比較（目前狀態）</h2>
+<div class="table-wrap"><table>
+  <tr><th>面向</th><th>v1 (v7.6)</th><th>v2 (v8.0)</th><th>v3 (v9.0)</th></tr>
+  <tr><td>變體 (variant)</td><td>single-roi</td><td>dual-roi-or</td><td>central-roi-overlay-removed</td></tr>
+  <tr><td>ROI 數量</td><td>1（LEFT）</td><td>2（LEFT + 鏡像）</td><td>1（CENTRAL）</td></tr>
+  <tr><td>Overlay 移除</td><td>✗</td><td>✗</td><td>✓</td></tr>
+  <tr><td>Input resize</td><td>1280 × 1024</td><td>1280 × 1024</td><td>1280 × 1024</td></tr>
+  <tr><td>單次 predict latency</td><td>~25 ms</td><td>~40 ms</td><td>~80 ms</td></tr>
+  <tr><td>24 張 labeled 準確率</td><td class="ok">100%</td><td>95.8%（1 FP）</td><td class="ok">100%</td></tr>
+  <tr><td>適用情境</td><td>相機 framing 穩定、把 UI overlay 當常數</td><td>想看 probe card 左右兩側獨立判定、per-ROI 可觀測性</td><td>擔心 AOI 機器 UI 版型未來變更會影響準確度</td></tr>
+  <tr><td>Deliverable</td><td><code>aoi-api-package.zip</code></td><td><code>aoi-api-package_v2.zip</code></td><td><code>aoi-api-package_v3.zip</code></td></tr>
+</table></div>
+
+<!-- ===================== LEARNED ===================== -->
+<h2>今天學到的東西</h2>
+<ul class="plain">
+  <li>v2 第一次嘗試「加總兩側 features」直接把 calibration 打壞——把 feature 值加倍導致所有判定都變 <code>contact</code>。必須改成「per-ROI 獨立判定 + 聚合規則」才行得通。</li>
+  <li>在這份 24 張 labeled 資料上，<strong>單用 LEFT ROI 就已經足夠</strong>（100%）。v2 的右側鏡像或 v3 的 overlay 去除，其實是在為「未來邊界條件」付 robustness 保費，不是在拉當下準確率。</li>
+  <li>motion.py 裡的 <code>thin_lines()</code> 不能直接拿來做單張 overlay 移除——<strong>probe tips 本身就是一堆細橫線</strong>，偵測器會很開心地把它們也擦掉。要限縮到「依顏色」（藍色 mask）與「依亮度+長 run」（白色十字線）才安全。</li>
+  <li><code>cv2.inpaint</code>（TELEA, radius 3）對寬一點的 overlay（例如原生的藍色外框）比 row/column 線性插值乾淨很多。</li>
+  <li>同一份 <code>calibration.json</code> 可以在 v1 和 v2 共用——因為 v2 是把同一個模型獨立套用到左右兩個 crop 上；只有 v3 需要自己的 calibration（central ROI + overlay 去除改變了特徵分布）。</li>
+</ul>
+
+<!-- ===================== NEXT / BLOCKERS ===================== -->
+<h2>下一步</h2>
+<ul class="plain">
+  <li>目前沒有排 queue——等現場決定要上哪個變體。</li>
+  <li>若選 v3，<strong>需要驗證 <code>blue_delta=25</code> 和 <code>cross_brightness=180</code> 兩個預設值能不能 generalize</strong> 到新的 probe card 設計（某些 die 的金屬反光可能會落在「藍色」範圍）。</li>
+  <li>把三個 package 交接給做 <code>contact-monitor-service</code> 的同事；三個都暴露同一套 <code>GET /api/v1/config</code> + <code>POST /api/v1/predict</code> 合約，所以 monitor 端的程式碼不用管部署的是哪一版。</li>
+</ul>
+
+<h2>阻礙 / Blockers</h2>
+<p><span class="pill">無</span></p>
+
+<!-- ===================== COMMITS ===================== -->
+<h2>已 push 到 origin/main 的 commits</h2>
+<div class="table-wrap"><table>
+  <tr><th>Hash</th><th>摘要</th></tr>
+  <tr><td class="commit">5b7f38b</td><td>AOI-API v2 (v8.0): dual-ROI mirror + per-ROI OR aggregation, 1280 × 1024 resize</td></tr>
+  <tr><td class="commit">11ed61e</td><td>AOI-API v7.6: 1280 × 1024 internal resize + recalibration</td></tr>
+  <tr><td class="commit">b1d3e96</td><td>AOI-API v3 (v9.0): overlay removal + central ROI</td></tr>
+</table></div>
+<p class="meta">Repo：<code>github.com/renjmindy/myMVP</code> · branch <code>main</code></p>
+
+</main>
+</body>
+</html>
