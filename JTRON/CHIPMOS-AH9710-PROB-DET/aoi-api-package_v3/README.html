@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AH9710 AOI-API v3 — 開發者 Package</title>
+<style>
+:root {
+  --bg: #f6f7f9; --surface: #ffffff; --surface-2: #eef1f5; --border: #d7dce3;
+  --text: #1b2430; --muted: #5b6676; --accent: #0b6e8a; --accent-soft: #e2f1f5;
+  --ok: #1f8a4c; --warn: #b26a00; --err: #c23a3a;
+  --code-bg: #0f1720; --code-text: #d7e2ee;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+    --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+    --ok: #4cc07c; --warn: #e3a23a; --err: #ec6b6b;
+    --code-bg: #0a0f14; --code-text: #d7e2ee;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141a; --surface: #161d25; --surface-2: #1d2630; --border: #2c3744;
+  --text: #e4e9ef; --muted: #9aa6b4; --accent: #4cb8d4; --accent-soft: #15313b;
+  --ok: #4cc07c; --warn: #e3a23a; --err: #ec6b6b;
+  --code-bg: #0a0f14; --code-text: #d7e2ee;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 15px/1.65 system-ui, -apple-system, "Segoe UI", "Microsoft JhengHei", "Noto Sans TC", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 32px 16px 80px; }
+h1 { font-size: 28px; margin: 0 0 6px; }
+h2 { font-size: 21px; margin: 40px 0 10px; }
+h3 { font-size: 16px; margin: 22px 0 8px; }
+p { margin: 8px 0; }
+.lead { color: var(--muted); margin: 0 0 20px; }
+nav.toc { display: flex; flex-wrap: wrap; gap: 6px 14px; margin: 18px 0 8px; font-size: 14px; }
+nav.toc a { color: var(--accent); text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
+.meta { color: var(--muted); font-size: 13px; }
+code, .mono { font-family: ui-monospace, "Cascadia Mono", Consolas, monospace; font-size: 13px; }
+:not(pre) > code { background: var(--surface-2); padding: 1px 5px; border-radius: 4px; }
+pre { background: var(--code-bg); color: var(--code-text); padding: 14px 16px; border-radius: 8px; overflow-x: auto; margin: 10px 0; }
+pre code { font-size: 12.5px; line-height: 1.55; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; background: var(--surface); font-size: 14px; }
+th, td { border: 1px solid var(--border); padding: 7px 10px; text-align: left; vertical-align: top; }
+th { background: var(--surface-2); font-weight: 600; white-space: nowrap; }
+.note { border-left: 3px solid var(--accent); background: var(--accent-soft); padding: 10px 14px; border-radius: 0 8px 8px 0; margin: 12px 0; }
+.pill { display: inline-block; font-size: 12px; padding: 1px 9px; border-radius: 6px; font-family: ui-monospace, Consolas, monospace; font-weight: 700; }
+.pill.ok { color: var(--ok); background: color-mix(in srgb, var(--ok) 15%, transparent); }
+.pill.warn { color: var(--warn); background: color-mix(in srgb, var(--warn) 15%, transparent); }
+ul, ol { padding-left: 22px; }
+hr { border: 0; border-top: 1px solid var(--border); margin: 36px 0; }
+.kv-table th { width: 30%; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>AH9710 AOI-API v3 — 開發者 Package（central ROI, overlay-removed）</h1>
+<p class="lead">v1 的另一個進化版本：<strong>先把 AOI 機器 UI 的藍色外框與白色十字線拿掉</strong>，再把 ROI 擺在<strong>中央區域</strong>做判定。想法是：讓 classifier 看到的 ROI 幾乎只剩下 probe / die 的內容，不被量測軟體的 UI overlay 干擾。</p>
+<p class="meta">v9.0 · 服務 port <code>8000</code> · variant <code>central-roi-overlay-removed</code> · 24 張 labeled data 準確率 <strong>100%</strong>（min decision margin 0.29）</p>
+
+<nav class="toc" aria-label="目錄">
+  <a href="#contents">1. Package 內容</a>
+  <a href="#install">2. 安裝與啟動</a>
+  <a href="#flow">3. 整體資料流</a>
+  <a href="#config-file">4. 設定檔</a>
+  <a href="#log">5. Log 紀錄</a>
+  <a href="#endpoints">6. HTTP endpoints</a>
+  <a href="#batch">7. 批次掃描工具</a>
+  <a href="#monitor">8. 給 monitor 的呼叫方式</a>
+  <a href="#features">9. 特徵說明</a>
+  <a href="#recal">10. 重新校正</a>
+  <a href="#open">11. 待確認事項</a>
+  <a href="#trouble">12. 疑難排解</a>
+</nav>
+
+<hr>
+
+<h2 id="contents">1. 這個 Package 的內容</h2>
+<pre><code>aoi-api-package_v3/
+├── prob_api.py            # FastAPI 服務本體 (v9.0, central ROI + overlay removal)
+├── config/
+│   └── aoi_api.json       # 新增 overlay_removal 區塊（見 §4）
+├── local_output/
+│   ├── calibration.json   # v3 專用模型（在 1280×1024 的 cleaned central ROI 上訓練）
+│   ├── contact/           # contact 判定：cleaned 原圖 + cropped crop
+│   └── non-contact/       # non_contact 判定：僅 cleaned 原圖
+├── logs/
+│   └── aoi_api.log        # 每次 predict 的 JSON Lines 紀錄
+├── requirements.txt
+├── scan_batch.py          # CLI 工具（與 v1 相同的 response shape，可直接用）
+├── samples/
+│   ├── contact.png            # 完整 1540×1050 RCM 截圖（contact）
+│   └── non_contact.png        # 完整 1540×1050 RCM 截圖（non_contact）
+├── README.md
+└── README.html            # 本文件</code></pre>
+
+<h2 id="install">2. 安裝與啟動</h2>
+<pre><code>python3 -m venv .venv &amp;&amp; source .venv/bin/activate
+pip install -r requirements.txt
+python prob_api.py          # 讀 config/aoi_api.json，預設 port 8000</code></pre>
+<p>Health 檢查：<code>GET http://localhost:8000/api/v1/health</code> 應回 <code>{"status":"ok","service":"aoi-api","version":"9.0","variant":"central-roi-overlay-removed","calibrated":true}</code>。Swagger UI：<code>http://localhost:8000/docs</code></p>
+
+<h2 id="flow">3. 整體資料流</h2>
+<pre><code>RCM 相機（任意解析度）
+   │ snapshot
+   ▼
+POST /api/v1/predict  multipart file=&lt;整張 RCM&gt;
+   │
+   ▼
+AOI API v3
+   │ 1. 讀入 → resize 到 1280 × 1024
+   │ 2. 偵測 AOI 機器 UI overlay：
+   │       - 藍/青色像素（B − R &gt; 25，對外框、內框、cyan teal 框都有效）
+   │       - 白色十字線（亮度 &gt; 180 且形成長 run）
+   │    → 用 cv2.inpaint 填補
+   │ 3. 依 reference_roi (0.30, 0.35, 0.75, 0.80) 裁出中央 crop (576 × 461)
+   │ 4. 算 5 個特徵 → logistic → status
+   │ 5. 存檔：
+   │    每次都存 &lt;timestamp&gt;.jpg ← <strong>cleaned</strong> 1280×1024 原圖 + 黃色 ROI 外框
+   │         - contact      → ./local_output/contact/
+   │         - non_contact  → ./local_output/non-contact/
+   │    僅 contact 多存：cropped_&lt;timestamp&gt;.jpg ← 中央 crop
+   │ 6. 寫一行 JSON Lines 到 ./logs/aoi_api.log
+   │ 7. 回傳 JSON
+   ▼
+monitor 依 response 更新 Redis / LED、Web UI 依 `roi_image` 顯示</code></pre>
+
+<div class="note"><strong>為什麼要去 overlay？</strong> AOI 機器的 UI 本身會在畫面上畫一個藍/青色框（固定位置）和白色十字線。這些東西對 contact 判定毫無意義，但 Laplacian / Sobel / Canny 會把它們當成強邊緣，拉高 <code>lap_var</code> / <code>grad_mag</code> / <code>edge_den</code>，可能讓 non_contact 影像也被誤判為 contact。v3 先把它們擦掉，讓 classifier 只看 probe / die 的訊號。</div>
+
+<h2 id="config-file">4. 設定檔 <code>config/aoi_api.json</code></h2>
+<p>v3 比 v1 多一個 <code>overlay_removal</code> 區塊。其他設定意義不變。</p>
+<pre><code>{
+  "server": { "host": "0.0.0.0", "port": 8000 },
+  "paths": {
+    "calibration_json": "./local_output/calibration.json",
+    "contact_dir": "./local_output/contact",
+    "non_contact_dir": "./local_output/non-contact",
+    "log_dir": "./logs"
+  },
+  "logging": {
+    "level": "INFO",
+    "filename": "aoi_api.log",
+    "rotation": "daily",
+    "backup_count": 7
+  },
+  "input_resize": {
+    "width": 1280,
+    "height": 1024
+  },
+  "overlay_removal": {
+    "enabled": true,
+    "blue_delta": 25,
+    "cross_brightness": 180,
+    "cross_min_run": 20,
+    "inpaint_radius": 3
+  }
+}</code></pre>
+
+<h3><code>overlay_removal</code> 欄位</h3>
+<div class="table-wrap"><table>
+  <tr><th>欄位</th><th>說明</th></tr>
+  <tr><td><code>enabled</code></td><td>設 <code>false</code> 可完全關掉 overlay removal（例如除錯、或換成沒有 UI 的 raw snapshot）</td></tr>
+  <tr><td><code>blue_delta</code></td><td>當某像素 <code>blue − red &gt; blue_delta</code> 即判為 overlay。預設 25。值太低 → 把正常 probe 內容也當 overlay；值太高 → 抓不到淡藍色的細框</td></tr>
+  <tr><td><code>cross_brightness</code></td><td>白色十字線的亮度下限。預設 180。probe tips 的亮度約 100–160，所以 180 可以避開它們</td></tr>
+  <tr><td><code>cross_min_run</code></td><td>白色連續像素長度 ≥ 這個值才判為十字線。預設 20</td></tr>
+  <tr><td><code>inpaint_radius</code></td><td><code>cv2.inpaint</code> 的 radius 參數。預設 3</td></tr>
+</table></div>
+<div class="note"><strong>改任何欄位都要重新校正</strong>（§10），因為特徵分布會跟著變。</div>
+
+<h2 id="log">5. Log 紀錄（JSON Lines）</h2>
+<p>與 v1 相同——每次 predict 一行 JSON，每日午夜輪替。<code>startup</code> 事件額外紀錄 <code>variant</code> 與 <code>overlay_removal</code> 設定。</p>
+<p><strong>Predict 事件格式範例</strong>：</p>
+<pre><code>{
+  "ts": "2026-11-11T14:20:55.999",
+  "level": "INFO",
+  "event": "predict",
+  "filename": "contact.png",
+  "status": "contact",
+  "roi_image": "/local_output/contact/cropped_20261111_142055_999.jpg",
+  "fullframe_image": "/local_output/contact/20261111_142055_999.jpg",
+  "laplacian_score": 11.78,
+  "probability_contact": 0.7912,
+  "features": {"lap_var":11.7824,"mean":36.2945,"std":25.6104,"edge_den":0.0076,"grad_mag":21.0901},
+  "latency_ms": 85.3
+}</code></pre>
+<div class="note"><strong>注意</strong>：feature 數值的絕對範圍跟 v1 / v2 不同（因為是在<strong>去除 overlay 後</strong>的 central ROI 上算的），所以 v3 的 log 不能跟 v1 / v2 的 log 直接比較。要比較不同版本的話，看 <code>probability_contact</code> 和 <code>status</code>，不要看 raw features。</div>
+
+<h2 id="endpoints">6. HTTP endpoints</h2>
+
+<h3><code>GET /api/v1/health</code></h3>
+<pre><code>{
+  "status": "ok",
+  "service": "aoi-api",
+  "version": "9.0",
+  "variant": "central-roi-overlay-removed",
+  "calibrated": true
+}</code></pre>
+
+<h3><code>GET /api/v1/config</code></h3>
+<pre><code>{
+  "variant": "central-roi-overlay-removed",
+  "input_resize": { "width": 1280, "height": 1024 },
+  "overlay_removal": { "enabled": true, "blue_delta": 25, "cross_brightness": 180, "cross_min_run": 20, "inpaint_radius": 3 },
+  "reference_roi": { "rx1": 0.30, "ry1": 0.35, "rx2": 0.75, "ry2": 0.80 },
+  "model": "logistic",
+  "features": ["lap_var", "mean", "std", "edge_den", "grad_mag"],
+  "decision_threshold": 0.5,
+  "trained_on": {
+    "n_contact": 10, "n_non_contact": 14,
+    "resolution": {"width":1280,"height":1024},
+    "overlay_removal": true
+  }
+}</code></pre>
+
+<h3><code>POST /api/v1/predict</code></h3>
+<p><code>multipart/form-data</code>，單一欄位 <code>file</code>。上傳 <strong>完整 RCM 截圖</strong>（任意解析度）。</p>
+<pre><code>curl -s -X POST http://localhost:8000/api/v1/predict \
+  -F 'file=@samples/contact.png' | jq .</code></pre>
+<p><strong>contact response</strong>：</p>
+<pre><code>{
+  "status": "contact",
+  "roi_image": "/local_output/contact/cropped_20261111_142055_999.jpg",
+  "fullframe_image": "/local_output/contact/20261111_142055_999.jpg",
+  "laplacian_score": 11.78,
+  "probability_contact": 0.7912,
+  "features": { "lap_var": 11.78, "mean": 36.29, "std": 25.61, "edge_den": 0.0076, "grad_mag": 21.09 }
+}</code></pre>
+<p><strong>non_contact response</strong>：</p>
+<pre><code>{
+  "status": "non_contact",
+  "roi_image": null,
+  "fullframe_image": "/local_output/non-contact/20261111_142056_120.jpg",
+  "laplacian_score": 14.06,
+  "probability_contact": 0.395,
+  "features": { "lap_var": 14.06, "mean": 36.86, "std": 21.85, "edge_den": 0.008, "grad_mag": 10.52 }
+}</code></pre>
+<div class="table-wrap"><table class="kv-table">
+  <tr><th>欄位</th><th>說明</th></tr>
+  <tr><td><code>status</code></td><td><span class="pill ok">contact</span> 或 <span class="pill warn">non_contact</span></td></tr>
+  <tr><td><code>roi_image</code></td><td>contact 時為中央 crop 的 URL；non_contact 時為 <code>null</code></td></tr>
+  <tr><td><code>fullframe_image</code></td><td>一律有值——<strong>cleaned</strong> 1280×1024 原圖 + 黃色 ROI 外框</td></tr>
+  <tr><td><code>laplacian_score</code></td><td>等同於 <code>features.lap_var</code></td></tr>
+  <tr><td><code>probability_contact</code></td><td>logistic 機率</td></tr>
+  <tr><td><code>features</code></td><td>5 個特徵（在<strong>去除 overlay 的 central crop</strong> 上算的）</td></tr>
+</table></div>
+
+<h2 id="batch">7. 批次掃描工具 — <code>scan_batch.py</code></h2>
+<p>與 v1 完全相同的介面；response shape 也一樣，可直接用：</p>
+<pre><code>python scan_batch.py samples/
+python scan_batch.py labeled_data/ --labeled   # 有 label 時量測準確率
+python scan_batch.py samples/ --csv v3_results.csv</code></pre>
+
+<h2 id="monitor">8. <code>contact-monitor-service</code> 應該怎麼呼叫這個 API</h2>
+<p>與 v1 相同：<strong>不要裁切、不要 resize、不要去 overlay</strong>，整張送 AOI 就好。所有前處理（resize、overlay 去除、裁切）都在 AOI 內部。</p>
+
+<h3>相機設定</h3>
+<ul>
+  <li>RCM 解析度不限（API 會 resize 到 1280 × 1024）</li>
+  <li>構圖：確保 central ROI（左 30%–75% 寬 × 上 35%–80% 高）框到 probe / die 接觸區</li>
+  <li>AOI 機器內建的藍色框與十字線可以保留——API 會把它們去掉</li>
+</ul>
+
+<h3>儲存量估算 + 檔案回收</h3>
+<p>Monitor 每 <code>aoi.interval_ms</code> 呼叫一次（預設 200 ms = 5 Hz）：</p>
+<ul>
+  <li>每次 AOI 寫<strong>一行 JSONL log</strong>（約 450 B）</li>
+  <li><strong>每次都寫</strong>一張 cleaned 原圖（1280 × 1024，~130 KB——比 v1/v2 稍小因為 overlay 被擦掉了）</li>
+  <li><strong>僅 contact 時</strong>多寫一張中央 crop（576 × 461，~70 KB）</li>
+</ul>
+<p>粗估：</p>
+<ul>
+  <li>每小時 log：18,000 × ~450 B ≈ <strong>~8 MB</strong></li>
+  <li>每小時原圖：18,000 × ~130 KB ≈ <strong>~2.3 GB</strong>（大多分流到 non-contact/）</li>
+  <li>每小時 crop：取決於 contact 事件比例</li>
+</ul>
+<p>檔案回收 service 要清理 <code>paths.contact_dir</code>、<code>paths.non_contact_dir</code>、<code>paths.log_dir</code> 內已輪替的檔案。</p>
+
+<h3>和 v1 / v2 的比較</h3>
+<div class="table-wrap"><table>
+  <tr><th>面向</th><th>v1 (v7.6)</th><th>v2 (v8.0)</th><th>v3 (v9.0)</th></tr>
+  <tr><td>ROI 數量</td><td>1（LEFT）</td><td>2（LEFT + RIGHT mirror）</td><td>1（CENTRAL）</td></tr>
+  <tr><td>Overlay 移除</td><td>✗</td><td>✗</td><td>✓（藍/青框 + 白十字）</td></tr>
+  <tr><td>聚合方式</td><td>—</td><td>per-ROI OR</td><td>—</td></tr>
+  <tr><td>Latency</td><td>~25 ms</td><td>~40 ms</td><td><strong>~80 ms</strong>（inpaint 比較慢）</td></tr>
+  <tr><td>24 張 labeled 準確率</td><td>100%</td><td>95.8%</td><td>100%</td></tr>
+  <tr><td>適用情境</td><td>相機 framing 穩定、不在意 UI overlay 污染 ROI</td><td>想看 probe card 左右兩側獨立判定</td><td>AOI 機器本身會畫 UI overlay、擔心 overlay 影響 ROI 準確度</td></tr>
+</table></div>
+
+<h2 id="features">9. 特徵說明</h2>
+<p>與 v1 / v2 相同的 5 個特徵、相同的計算方式（ROI 灰階 + 5×5 Gaussian blur）。差別只在於 ROI <strong>內容</strong>不同（central vs. left，overlay 已去除 vs. 沒去除），所以特徵的絕對範圍和模型權重會不同。</p>
+<p><strong>v3 模型權重（在 1280×1024 的 cleaned central ROI 上訓練）</strong>：</p>
+<div class="table-wrap"><table>
+  <tr><th>Feature</th><th>衡量目標</th><th style="text-align:right">v3 權重</th></tr>
+  <tr><td><code>lap_var</code></td><td>Laplacian 變異數</td><td style="text-align:right"><strong>+1.54</strong></td></tr>
+  <tr><td><code>grad_mag</code></td><td>Sobel gradient magnitude 平均</td><td style="text-align:right"><strong>+1.83</strong></td></tr>
+  <tr><td><code>edge_den</code></td><td>Canny edge pixel 比例</td><td style="text-align:right"><strong>+1.59</strong></td></tr>
+  <tr><td><code>mean</code></td><td>灰階平均強度</td><td style="text-align:right"><strong>−1.59</strong></td></tr>
+  <tr><td><code>std</code></td><td>灰階強度 std-dev</td><td style="text-align:right">+0.26</td></tr>
+  <tr><td><em>intercept</em></td><td></td><td style="text-align:right">−0.56</td></tr>
+</table></div>
+<p>注意 <code>mean</code> 的權重是<strong>負的</strong>——因為 v3 的 central ROI 包含較多 die 的暗背景；contact 事件讓局部有探針反射，但整體 mean 反而稍微變低（跟 v1/v2 的 left ROI 不同，那邊的 contact 常常更亮）。模型自己學到這個方向。</p>
+
+<h2 id="recal">10. 校正：相機 / FOV / resize / overlay 參數變更時</h2>
+<p>需要重新校正的情況：</p>
+<ul>
+  <li>鏡頭、FOV、zoom 有明顯變動</li>
+  <li>修改 <code>config/aoi_api.json</code> 的 <code>input_resize</code></li>
+  <li>修改 <code>config/aoi_api.json</code> 的 <code>overlay_removal</code> 任何欄位（含 <code>enabled</code>）</li>
+  <li>更新機器 UI 樣式（新版的 AOI 機器 overlay 可能顏色 / 位置不同）</li>
+</ul>
+<p>校正流程（給 API owner）：</p>
+<ol>
+  <li>收集 ≥10 張 contact + ≥10 張 non_contact 的 labeled 影像。</li>
+  <li>在校正 script 內設定 <code>TARGET</code> 與 <code>ROI</code> 常數（和你改的 config 一致）。</li>
+  <li>執行 script，它會：resize → overlay removal → central crop → 跑 logistic → 覆蓋 <code>aoi-api-package_v3/local_output/calibration.json</code>。</li>
+  <li>不必改 <code>prob_api.py</code>。</li>
+</ol>
+
+<h2 id="open">11. 待確認事項</h2>
+<ol>
+  <li><strong>Overlay removal 可能影響 probe / die 的輕微反射</strong>：blue_delta 預設 25 比較保守，但若某些 die 本身有藍色反光（例如多層金屬疊構造），會被誤當成 overlay 去掉。遇到時調高 <code>blue_delta</code>（例如 40–60）或改 ROI 避開那塊區域。</li>
+  <li><strong>白色十字線偵測可能誤傷</strong>：若 probe tip 反光很強（亮度 &gt; 180）且連續排列超過 <code>cross_min_run</code> 像素，會被誤當成十字線。目前 24 張訓練資料沒出現這個問題；若實際佈線有大面積的亮白條紋請調 <code>cross_brightness</code>。</li>
+  <li><strong>Latency ~80 ms</strong>：主要是 <code>cv2.inpaint</code> 的成本。若完全不需要 overlay 移除（相機沒有 UI overlay），把 <code>overlay_removal.enabled</code> 設為 <code>false</code> 並重新校正即可降到 ~25 ms。</li>
+</ol>
+
+<h2 id="trouble">12. 疑難排解</h2>
+<div class="table-wrap"><table>
+  <tr><th>現象</th><th>可能原因</th><th>修正方式</th></tr>
+  <tr><td><code>GET /api/v1/health</code> 回傳 <code>"calibrated": false</code></td><td><code>calibration.json</code> 缺失或格式有誤</td><td>從本 package 還原該檔案</td></tr>
+  <tr><td>所有判定都是 contact</td><td>overlay removal 過度激烈，把 probe 內容也擦掉</td><td>把 <code>blue_delta</code> 調大（例如 40）、<code>cross_brightness</code> 調高、或暫時 <code>enabled: false</code> 看 raw</td></tr>
+  <tr><td>所有判定都是 non_contact</td><td>overlay removal 不足，ROI 還是看到 UI 邊</td><td>把 <code>blue_delta</code> 調小（例如 15）、<code>cross_brightness</code> 調低</td></tr>
+  <tr><td>POST 回 <code>500</code> 且訊息含 <code>計算出的 ROI 範圍無效</code></td><td>上傳的圖太小</td><td>確認相機能提供至少 1280×1024 以上影像</td></tr>
+  <tr><td>啟動時 stderr 出現 <code>WARN: config ... not found — using defaults</code></td><td>config 檔不存在或路徑錯</td><td>確認從 package 根目錄啟動</td></tr>
+  <tr><td>Latency &gt; 200 ms</td><td>絕大部分在 inpaint</td><td>關掉 overlay removal 或縮小 inpaint_radius</td></tr>
+</table></div>
+
+</main>
+</body>
+</html>
